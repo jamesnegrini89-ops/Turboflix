@@ -1,104 +1,73 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#08050d">
-  <meta name="description" content="TurboFlix - player IPTV pessoal">
-  <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="css/style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0B0616" />
+  <meta name="description" content="TurboFlix - Player IPTV (M3U e Xtream Codes) para TV, Fire TV e celular" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>TurboFlix</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="css/style.css" />
 </head>
-
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-icon">▶️</span>
-      Turbo<span>Flix</span>
-    </div>
+  <div class="stars"></div>
 
-    <nav class="main-nav" aria-label="Navegação principal">
-      <button class="nav-button active" data-view="home">
-        Início
-      </button>
-
-      <button class="nav-button" data-view="live">
-        TV ao vivo
-      </button>
-
-      <button class="nav-button" data-view="movies">
-        Filmes
-      </button>
-
-      <button class="nav-button" data-view="series">
-        Séries
-      </button>
-
-      <button class="nav-button" data-view="favorites">
-        ★ Favoritos
-      </button>
-
-      <button class="nav-button" data-view="settings">
-        ⚙️ Configurações
-      </button>
+  <!-- Barra superior -->
+  <header id="topbar">
+    <a class="logo" href="#/home" tabindex="-1">
+      <span class="logo-play"></span><b>Turbo</b><span class="logo-flix">Flix</span>
+    </a>
+    <nav id="mainnav">
+      <button class="nav-btn focusable" data-route="#/home" data-icon="home">Início</button>
+      <button class="nav-btn focusable" data-route="#/mylist" data-icon="bookmark">Minha Lista</button>
+      <button class="nav-btn focusable" data-route="#/search" data-icon="search">Buscar</button>
+      <button class="nav-btn focusable" data-route="#/settings" data-icon="settings">Configurações</button>
     </nav>
-
-    <label class="search-box">
-      <span class="sr-only">Buscar conteúdo</span>
-      <input
-        id="searchInput"
-        type="search"
-        placeholder="Buscar..."
-        autocomplete="off"
-      >
-    </label>
+    <div class="clock"><div id="clock-time">--:--</div><div id="clock-date"></div></div>
   </header>
 
-  <main id="app" class="app-container">
-    <section class="loading-screen">
-      <div class="loading-spinner"></div>
-      <p>Carregando TurboFlix...</p>
-    </section>
-  </main>
+  <main id="view"></main>
 
-  <dialog id="playerDialog" class="player-dialog">
-    <div class="player-header">
-      <h2 id="playerTitle">Reprodução</h2>
-
-      <button
-        id="closePlayerButton"
-        class="close-button"
-        aria-label="Fechar player"
-      >
-        ×
-      </button>
+  <!-- Player de vídeo -->
+  <div id="player" hidden>
+    <video id="video" playsinline webkit-playsinline preload="auto"></video>
+    <div class="p-spinner" id="p-spinner"></div>
+    <div class="p-overlay" id="p-overlay">
+      <div class="p-top">
+        <button class="p-btn" data-p="back" data-icon="back" aria-label="Voltar"></button>
+        <div class="p-titles">
+          <div class="p-title" id="p-title"></div>
+          <div class="p-sub" id="p-sub"></div>
+        </div>
+        <span class="badge-live" id="p-live">AO VIVO</span>
+        <button class="p-btn" data-p="fav" data-icon="heart" aria-label="Minha Lista"></button>
+      </div>
+      <div class="p-bottom">
+        <div class="p-bar" id="p-bar"><div class="p-buf" id="p-buf"></div><div class="p-fill" id="p-fill"></div></div>
+        <div class="p-row">
+          <button class="p-btn" data-p="prev" data-icon="prev" aria-label="Anterior"></button>
+          <button class="p-btn" data-p="rw" data-icon="replay10" aria-label="Voltar 10s"></button>
+          <button class="p-btn p-main" data-p="play" data-icon="pause" aria-label="Play/Pause"></button>
+          <button class="p-btn" data-p="ff" data-icon="forward10" aria-label="Avançar 10s"></button>
+          <button class="p-btn" data-p="next" data-icon="next" aria-label="Próximo"></button>
+          <span class="p-time" id="p-time"></span>
+          <span class="p-flex"></span>
+          <span class="p-hint" id="p-hint"></span>
+          <button class="p-btn" data-p="fs" data-icon="fullscreen" aria-label="Tela cheia"></button>
+        </div>
+      </div>
     </div>
+    <div class="p-zap" id="p-zap" hidden></div>
+    <div class="p-error" id="p-error" hidden></div>
+  </div>
 
-    <video
-      id="videoPlayer"
-      class="video-player"
-      controls
-      playsinline
-      preload="metadata"
-    ></video>
-
-    <div class="player-actions">
-      <button id="playerFavoriteButton" class="player-action-button">
-        ★ Favoritar
-      </button>
-
-      <button id="restartButton" class="player-action-button">
-        Reiniciar
-      </button>
-    </div>
-
-    <p id="playerMessage" class="player-message"></p>
-  </dialog>
-
-  <script
-    src="https://cdn.jsdelivr.net/npm/hls.js@latest"
-    crossorigin="anonymous"
-  ></script>
+  <div id="loading" hidden><div class="spinner"></div><div id="loading-msg">Carregando...</div></div>
+  <div id="toast" hidden></div>
 
   <script type="module" src="js/app.js"></script>
 </body>
