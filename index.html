@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#08050d">
+  <meta name="description" content="TurboFlix - player IPTV pessoal">
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="css/style.css">
+  <title>TurboFlix</title>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-icon">▶️</span>
+      Turbo<span>Flix</span>
+    </div>
+
+    <nav class="main-nav" aria-label="Navegação principal">
+      <button class="nav-button active" data-view="home">
+        Início
+      </button>
+
+      <button class="nav-button" data-view="live">
+        TV ao vivo
+      </button>
+
+      <button class="nav-button" data-view="movies">
+        Filmes
+      </button>
+
+      <button class="nav-button" data-view="series">
+        Séries
+      </button>
+
+      <button class="nav-button" data-view="favorites">
+        ★ Favoritos
+      </button>
+
+      <button class="nav-button" data-view="settings">
+        ⚙️ Configurações
+      </button>
+    </nav>
+
+    <label class="search-box">
+      <span class="sr-only">Buscar conteúdo</span>
+      <input
+        id="searchInput"
+        type="search"
+        placeholder="Buscar..."
+        autocomplete="off"
+      >
+    </label>
+  </header>
+
+  <main id="app" class="app-container">
+    <section class="loading-screen">
+      <div class="loading-spinner"></div>
+      <p>Carregando TurboFlix...</p>
+    </section>
+  </main>
+
+  <dialog id="playerDialog" class="player-dialog">
+    <div class="player-header">
+      <h2 id="playerTitle">Reprodução</h2>
+
+      <button
+        id="closePlayerButton"
+        class="close-button"
+        aria-label="Fechar player"
+      >
+        ×
+      </button>
+    </div>
+
+    <video
+      id="videoPlayer"
+      class="video-player"
+      controls
+      playsinline
+      preload="metadata"
+    ></video>
+
+    <div class="player-actions">
+      <button id="playerFavoriteButton" class="player-action-button">
+        ★ Favoritar
+      </button>
+
+      <button id="restartButton" class="player-action-button">
+        Reiniciar
+      </button>
+    </div>
+
+    <p id="playerMessage" class="player-message"></p>
+  </dialog>
+
+  <script
+    src="https://cdn.jsdelivr.net/npm/hls.js@latest"
+    crossorigin="anonymous"
+  ></script>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

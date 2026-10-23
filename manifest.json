@@ -1,0 +1,31 @@
+{
+  "name": "TurboFlix - Player IPTV",
+  "short_name": "TurboFlix",
+  "description": "Player IPTV pessoal para celular e Fire TV",
+  "lang": "pt-BR",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#08050d",
+  "background_color": "#08050d",
+  "categories": [
+    "entertainment",
+    "video",
+    "tv"
+  ],
+  "icons": [
+    {
+      "src": "assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
