@@ -1,6 +1,6 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
 import { Store, idbGet, idbSet, idbClear } from './storage.js';
-import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy } from './net.js';
+import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback } from './net.js';
 import { loadM3U, xtreamFromM3uUrl } from './m3u.js';
 import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js';
 import { initNav, focusFirst, focusEl } from './nav.js';
@@ -98,7 +98,7 @@ function lookup(id) {
 function resolveUrls(item) {
   const cfg = Store.cfg;
   if (cfg?.type === 'xtream' && item.sid !== undefined && (item.type === 'live' || item.type === 'movie')) return xtreamUrls(cfg, item);
-  return item.url ? [item.url] : [];
+  return item.url ? withIpFallback(item.url) : [];
 }
 
 // ---------------------------------------------------------------- Componentes
@@ -660,6 +660,13 @@ function renderLogin() {
         </details>
         <button class="btn primary wide focusable" data-act="login">Entrar</button>
         <div class="login-err" id="login-err" hidden></div>
+        ${location.protocol === 'https:' ? `
+        <div style="margin-top:14px;padding:12px 14px;border-radius:12px;background:rgba(155,77,255,.14);border:1px solid rgba(199,155,255,.35);text-align:left;font-size:13px;line-height:1.45">
+          <b style="color:#e2c6ff">⚡ Importante para listas <code>http://</code> no GitHub Pages:</b><br>
+          1. Clique no ícone <b>⚙️ / cadeado</b> ao lado de <code>${esc(location.host)}</code> lá em cima na barra de endereço.<br>
+          2. Clique em <b>Configurações do site</b>.<br>
+          3. Em <b>Conteúdo inseguro</b>, mude de <i>Bloquear</i> para <b>Permitir</b> e volte para esta aba.
+        </div>` : ''}
       </div>
     </div>`;
   view.querySelectorAll('form').forEach((f) => f.addEventListener('submit', (e) => { e.preventDefault(); doLogin(); }));

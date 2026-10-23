@@ -1,16 +1,16 @@
-// Rede: requisições com timeout, pontes HTTPS/CORS automáticas e proxy customizado opcional.
+// Rede: requisições diretas, resolução DNS-over-HTTPS automática (contra bloqueio de DNS da operadora)
+// e suporte opcional a Proxy HTTPS (Cloudflare Worker).
 import { Store } from './storage.js';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-/** A página está em https e o link é http? (o navegador bloqueia = "mixed content") */
+/** A página está em https e o link é http? (o navegador bloqueia se "Conteúdo inseguro" não estiver liberado) */
 export const isMixed = (url) => location.protocol === 'https:' && /^http:\/\//i.test(url || '');
 
 /** Normaliza a URL do proxy customizado (ignora IP:porta sem http ou proxies SOCKS :1080). */
 export function cleanProxy(raw) {
   let p = String(raw ?? Store.settings.proxy ?? '').trim();
   if (!p) return '';
-  // Se digitou apenas IP:porta (ex.: 213.199.47.140:1080), não é um Web Proxy HTTPS válido
   if (/^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(p)) return '';
   if (!/^https?:\/\//i.test(p)) p = 'https://' + p;
   if (location.protocol === 'https:' && /^http:\/\//i.test(p)) return '';
@@ -27,26 +27,71 @@ export function proxify(url, customBase) {
   return p.replace(/\/+$/, '') + '/?url=' + encodeURIComponent(url);
 }
 
-/** Pontes HTTPS públicas gratuitas (usadas automaticamente para listas M3U e API Xtream). */
-const PUBLIC_BRIDGES = [
-  (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-  (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-  (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`
-];
+// Cache de hostnames resolvidos via DNS-over-HTTPS (Google / Cloudflare)
+// Muitas operadoras no Brasil bloqueiam domínios IPTV no DNS padrão, mas o IP funciona!
+const DNS_CACHE = new Map();
 
-/** Lista todas as URLs de tentativa (direta + proxy customizado + pontes públicas). */
-export function buildFetchCandidates(url) {
+export async function resolveHostIp(hostname) {
+  if (!hostname || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname === 'localhost') return null;
+  if (DNS_CACHE.has(hostname)) return DNS_CACHE.get(hostname);
+  const endpoints = [
+    `https://dns.google/resolve?name=${encodeURIComponent(hostname)}&type=A`,
+    `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=A`
+  ];
+  for (const ep of endpoints) {
+    try {
+      const r = await fetch(ep, { headers: { accept: 'application/dns-json' } });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const ans = (j.Answer || []).find((a) => a.type === 1 && /^\d+\.\d+\.\d+\.\d+$/.test(a.data));
+      if (ans) {
+        DNS_CACHE.set(hostname, ans.data);
+        return ans.data;
+      }
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
+/** Se o domínio estiver salvo no cache de DNS, retorna também a variante com IP direto. */
+export function withIpFallback(url) {
+  try {
+    const u = new URL(url);
+    const ip = DNS_CACHE.get(u.hostname);
+    if (ip && ip !== u.hostname) {
+      const u2 = new URL(url);
+      u2.hostname = ip;
+      return [url, u2.toString()];
+    }
+  } catch { /* ignore */ }
+  return [url];
+}
+
+/** Lista todas as URLs de tentativa para buscar uma URL (direta -> IP via DoH -> proxy). */
+export async function buildFetchCandidates(url) {
   const list = [];
   const custom = cleanProxy();
   if (custom) list.push(proxify(url, custom));
-  if (!isMixed(url)) list.push(url);
-  for (const fn of PUBLIC_BRIDGES) list.push(fn(url));
-  // Se mesmo em HTTPS o usuário liberou "Conteúdo inseguro" no navegador, tenta direto por último
-  if (isMixed(url)) list.push(url);
+
+  // Tenta URL direta primeiro (funciona quando Conteúdo Inseguro está liberado no navegador)
+  list.push(url);
+
+  // Resolve o IP via DNS do Google/Cloudflare caso o DNS da operadora bloqueie o domínio (ex.: conectdg26.me)
+  try {
+    const u = new URL(url);
+    const ip = await resolveHostIp(u.hostname);
+    if (ip && ip !== u.hostname) {
+      const byIp = new URL(url);
+      byIp.hostname = ip;
+      list.push(byIp.toString());
+      if (custom) list.unshift(proxify(byIp.toString(), custom));
+    }
+  } catch { /* ignore */ }
+
   return [...new Set(list)];
 }
 
-/** URL de imagem: usa ponte HTTPS quando a imagem é http:// numa página https://. */
+/** URL de imagem: usa wsrv.nl quando a imagem é http:// numa página https://. */
 export function imgUrl(u) {
   if (!u) return '';
   if (isMixed(u)) {
@@ -66,12 +111,27 @@ async function fetchWithTimeout(url, ms) {
   } finally { clearTimeout(t); }
 }
 
-/**
- * Busca um recurso de texto (lista M3U ou API Xtream).
- * Tenta na ordem: proxy customizado -> conexão direta -> pontes HTTPS públicas automáticas.
- */
-export async function fetchText(url, ms = 60000) {
-  const tries = buildFetchCandidates(url);
+function makeFriendlyError(url, lastErr) {
+  const msg = lastErr?.name === 'AbortError' ? 'Tempo esgotado' : (lastErr?.message || 'Failed to fetch');
+  if (/HTTP (401|403)/.test(msg)) {
+    return new Error(`Acesso negado pelo servidor IPTV (${msg}). Verifique usuário e senha.`);
+  }
+  if (/HTTP 404/.test(msg)) {
+    return new Error('Lista ou servidor não encontrado (HTTP 404). Verifique se o link está correto.');
+  }
+  if (isMixed(url) && !hasProxy()) {
+    const err = new Error(
+      'O navegador bloqueou a conexão porque sua lista usa "http://" e o GitHub Pages usa "https://". ' +
+      'Libere "Conteúdo inseguro" nas configurações do site (veja o passo a passo abaixo) e clique em Entrar novamente.'
+    );
+    err.code = 'MIXED_CONTENT';
+    return err;
+  }
+  return new Error(`Não foi possível conectar ao servidor (${msg}). Verifique sua conexão ou se o servidor está online.`);
+}
+
+export async function fetchText(url, ms = 45000) {
+  const tries = await buildFetchCandidates(url);
   let lastErr;
   for (const u of tries) {
     try {
@@ -82,14 +142,11 @@ export async function fetchText(url, ms = 60000) {
       lastErr = e;
     }
   }
-  const msg = lastErr?.name === 'AbortError' ? 'Tempo esgotado ao baixar a lista.' : (lastErr?.message || 'Falha de rede');
-  if (/HTTP (401|403)/.test(msg)) throw new Error(`Acesso negado pelo servidor IPTV (${msg}). Verifique usuário e senha.`);
-  if (/HTTP 404/.test(msg)) throw new Error('Lista ou servidor não encontrado (HTTP 404). Verifique se o link está completo e ativo.');
-  throw new Error(`Não foi possível carregar a lista (${msg}). Verifique se o link está ativo ou configure um Worker Proxy próprio.`);
+  throw makeFriendlyError(url, lastErr);
 }
 
-export async function fetchJSON(url, ms = 45000) {
-  const tries = buildFetchCandidates(url);
+export async function fetchJSON(url, ms = 35000) {
+  const tries = await buildFetchCandidates(url);
   let lastErr;
   for (const u of tries) {
     try {
@@ -100,8 +157,7 @@ export async function fetchJSON(url, ms = 45000) {
       lastErr = e;
     }
   }
-  const msg = lastErr?.message || 'Falha ao conectar';
-  throw new Error(`Não foi possível ler os dados do servidor (${msg}).`);
+  throw makeFriendlyError(url, lastErr);
 }
 
 /** Hash rápido de string (para IDs). */

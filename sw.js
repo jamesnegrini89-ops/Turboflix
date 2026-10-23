@@ -1,5 +1,5 @@
 // Service Worker do TurboFlix: guarda apenas os arquivos do app (não guarda vídeos nem listas).
-const VERSION = 'turboflix-v1.1.0';
+const VERSION = 'turboflix-v1.2.0';
 const SHELL = [
   './',
   './index.html',

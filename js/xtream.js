@@ -1,5 +1,5 @@
 // Cliente da API Xtream Codes (player_api.php).
-import { fetchJSON } from './net.js';
+import { fetchJSON, resolveHostIp, withIpFallback } from './net.js';
 import { Store } from './storage.js';
 
 export function normServer(s) {
@@ -8,8 +8,9 @@ export function normServer(s) {
   return v.replace(/\/(player_api|get)\.php.*$/i, '');
 }
 
-function api(cfg, action = '', extra = '') {
+async function api(cfg, action = '', extra = '') {
   const base = normServer(cfg.server);
+  try { await resolveHostIp(new URL(base).hostname); } catch {}
   const q = `username=${encodeURIComponent(cfg.user)}&password=${encodeURIComponent(cfg.pass)}`;
   return fetchJSON(`${base}/player_api.php?${q}${action ? '&action=' + action : ''}${extra}`);
 }
@@ -74,19 +75,24 @@ export async function loadXtream(cfg, progress = () => {}) {
   };
 }
 
-/** URLs de reprodução (em ordem de tentativa) para um item Xtream. */
+/** URLs de reprodução (em ordem de tentativa, incluindo IP direto caso o DNS da operadora bloqueie) para um item Xtream. */
 export function xtreamUrls(cfg, item) {
   const base = normServer(cfg.server);
   const up = `${encodeURIComponent(cfg.user)}/${encodeURIComponent(cfg.pass)}`;
+  let primary = [];
   if (item.type === 'live') {
     const fmt = Store.settings.liveFormat;
     const m3u8 = `${base}/live/${up}/${item.sid}.m3u8`;
     const ts = `${base}/live/${up}/${item.sid}.ts`;
-    return fmt === 'ts' ? [ts, m3u8] : [m3u8, ts];
+    primary = fmt === 'ts' ? [ts, m3u8] : [m3u8, ts];
+  } else if (item.type === 'movie') {
+    primary = [`${base}/movie/${up}/${item.sid}.${item.ext || 'mp4'}`];
+  } else if (item.url) {
+    primary = [item.url];
   }
-  if (item.type === 'movie') return [`${base}/movie/${up}/${item.sid}.${item.ext || 'mp4'}`];
-  if (item.url) return [item.url];
-  return [];
+  const out = [];
+  for (const u of primary) out.push(...withIpFallback(u));
+  return [...new Set(out)];
 }
 
 export async function xtreamVodInfo(cfg, vodId) {
