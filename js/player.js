@@ -34,7 +34,7 @@ function kindOf(url, live) {
   if (u.endsWith('.m3u8') || u.includes('.m3u8') || /output=(m3u8|hls)/i.test(url)) return ['hls'];
   if (u.endsWith('.ts') || /output=ts/i.test(url)) return ['ts'];
   if (/\.(mp4|mkv|webm|mov|m4v|avi|mp3|aac)$/.test(u)) return ['native'];
-  return live ? ['ts', 'hls'] : ['native', 'hls'];
+  return live ? ['ts', 'hls'] : ['native'];
 }
 
 async function prepareCandidates(item) {
@@ -90,7 +90,10 @@ function showError(msg, mixedHelp = false) {
       1. Clique no ícone de <b>cadeado / ajustes</b> ao lado do endereço <code>${esc(location.host)}</code> na barra do navegador.<br>
       2. Clique em <b>Configurações do site</b> (ou Permissões).<br>
       3. Em <b>Conteúdo inseguro (Insecure content)</b>, mude para <b>Permitir</b> e recarregue a página.
-    </div>` : '';
+    </div>` : `
+    <div style="margin-top:12px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+      <button class="btn primary focusable" data-p="retry">${icon('refresh')} Tentar novamente</button>
+    </div>`;
   box.innerHTML = `<div>${icon('tv')}<h3>Não foi possível reproduzir</h3><p>${esc(msg)}</p>${helpHtml}
     <p class="dim" style="margin-top:12px">Pressione VOLTAR para sair${S?.item.type === 'live' ? ' ou ▲/▼ para trocar de canal' : ''}.</p></div>`;
   box.hidden = false;
@@ -99,8 +102,13 @@ function showError(msg, mixedHelp = false) {
 function fail(reason) {
   if (!S) return;
   console.warn('Tentativa falhou no player:', reason, S.cands[S.ci]);
-  if (S.ci + 1 < S.cands.length) { S.ci++; playCandidate(); return; }
-  showError('O canal ou vídeo pode estar fora do ar, com limite de conexões (1 tela) em uso ou em formato incompatível.');
+  if (S.ci + 1 < S.cands.length) {
+    S.ci++;
+    // Pequena pausa (350ms) antes de tentar a próxima rota para o servidor IPTV (limite 1 tela) liberar a conexão anterior
+    setTimeout(() => { if (S) playCandidate(); }, 350);
+    return;
+  }
+  showError('O canal ou vídeo pode estar fora do ar, interceptado por gerenciador de downloads (IDM) ou com limite de 1 tela em uso.');
 }
 
 async function playCandidate() {
@@ -329,6 +337,7 @@ export const Player = {
       e.stopPropagation();
       const a = b.dataset.p;
       if (a === 'back') history.back();
+      else if (a === 'retry') { S.ci = 0; playCandidate(); }
       else if (a === 'play') togglePlay();
       else if (a === 'rw') seek(-10);
       else if (a === 'ff') seek(10);
