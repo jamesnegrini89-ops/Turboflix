@@ -1,7 +1,7 @@
 // Rede: requisições diretas, espelho real do servidor (server_info.url),
 // resolução DNS-over-HTTPS automática (contra bloqueio de DNS da operadora)
 // e suporte opcional a Proxy HTTPS (Cloudflare Worker).
-import { Store } from './storage.js';
+import { Store } from './storage.js?v=1.8.0';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 

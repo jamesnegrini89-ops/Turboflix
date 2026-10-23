@@ -320,6 +320,25 @@ body.no-topbar #topbar, body.playing #topbar { display: none; }
 .p-error h3 { margin: 10px 0; font-size: 22px; }
 .p-error p { max-width: 560px; color: #ddd; }
 
+/* ==================== Modal Transmitir / DLNA ==================== */
+.p-cast-modal { position: absolute; inset: 0; z-index: 60; background: rgba(8, 4, 18, .86); backdrop-filter: blur(8px); display: grid; place-items: center; padding: 18px; overflow-y: auto; }
+.p-cast-modal[hidden] { display: none !important; }
+.cast-box { width: min(600px, 100%); max-height: 92vh; overflow-y: auto; background: #190f2e; border: 1px solid rgba(199,155,255,.45); border-radius: 20px; padding: 20px 22px; box-shadow: 0 24px 70px rgba(0,0,0,.75); color: #fff; text-align: left; }
+.cast-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,.1); }
+.cast-head h3 { margin: 0; font-size: 19px; display: flex; align-items: center; gap: 8px; }
+.cast-head h3 svg { width: 24px; height: 24px; color: var(--purple-light); }
+.cast-sec { background: rgba(255,255,255,.04); border: 1px solid rgba(199,155,255,.2); border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; }
+.cast-sec h4 { margin: 0 0 6px; font-size: 14px; color: var(--purple-light); text-transform: uppercase; letter-spacing: .5px; }
+.cast-sec p { margin: 4px 0 8px; font-size: 13px; color: #ccc; line-height: 1.4; }
+.cast-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.cast-input { flex: 1; min-width: 190px; padding: 10px 13px; border-radius: 10px; background: #110920; border: 1px solid #4a3570; color: #fff; font-size: 14px; outline: none; }
+.cast-input:focus { border-color: var(--purple-light); box-shadow: var(--glow); }
+.cast-status { margin-top: 8px; font-size: 13px; color: #d8b9ff; min-height: 18px; }
+.cast-devs { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.cast-dev-btn { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 10px 14px; border-radius: 10px; background: rgba(155,77,255,.2); border: 1px solid rgba(199,155,255,.35); color: #fff; font-size: 14px; font-weight: 600; text-align: left; }
+.cast-dev-btn:hover, .cast-dev-btn:focus { background: var(--purple); box-shadow: 0 0 0 2px var(--purple-light); }
+.cast-dev-btn small { color: #ccc; font-weight: 400; font-size: 12px; }
+
 /* ==================== Celular ==================== */
 @media (max-width: 760px) {
   #topbar { flex-wrap: wrap; gap: 6px; padding: 8px 12px; }

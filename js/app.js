@@ -1,13 +1,13 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
-import { Store, idbGet, idbSet, idbClear } from './storage.js';
-import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js';
-import { loadM3U, xtreamFromM3uUrl } from './m3u.js';
-import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js';
-import { initNav, focusFirst, focusEl } from './nav.js';
-import { Player } from './player.js';
-import { icon, hydrateIcons } from './icons.js';
+import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.0';
+import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.0';
+import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.0';
+import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.0';
+import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.0';
+import { Player } from './player.js?v=1.8.0';
+import { icon, hydrateIcons } from './icons.js?v=1.8.0';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.8.0';
 const $ = (s, r = document) => r.querySelector(s);
 const view = $('#view');
 
@@ -917,7 +917,7 @@ function boot() {
   Player.init({ resolve: resolveUrls });
   startClock();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=1.8.0', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
   if (!location.hash) location.replace(Store.cfg ? '#/home' : '#/login');
   route();

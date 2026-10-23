@@ -1,22 +1,22 @@
 // Service Worker do TurboFlix:
-// 1. Guarda em cache apenas os arquivos estáticos do próprio app.
+// 1. Guarda em cache apenas os arquivos estáticos do próprio app (sempre validando versão nova na rede).
 // 2. Faz ponte de streaming local (/__stream__?url=...) para vídeos MP4/MKV http://
 //    quando o app roda em https:// (GitHub Pages), evitando que o elemento <video>
 //    do navegador bloqueie IPs http:// ou force upgrade para https://.
-const VERSION = 'turboflix-v1.7.0';
+const VERSION = 'turboflix-v1.8.0';
 const SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
-  './css/style.css',
-  './js/app.js',
-  './js/storage.js',
-  './js/net.js',
-  './js/m3u.js',
-  './js/xtream.js',
-  './js/nav.js',
-  './js/player.js',
-  './js/icons.js',
+  './css/style.css?v=1.8.0',
+  './js/app.js?v=1.8.0',
+  './js/storage.js?v=1.8.0',
+  './js/net.js?v=1.8.0',
+  './js/m3u.js?v=1.8.0',
+  './js/xtream.js?v=1.8.0',
+  './js/nav.js?v=1.8.0',
+  './js/player.js?v=1.8.0',
+  './js/icons.js?v=1.8.0',
   './js/vendor/hls.min.js',
   './js/vendor/mpegts.js',
   './icons/icon.svg',
@@ -25,7 +25,11 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(VERSION)
+      .then((c) => Promise.all(SHELL.map((u) => fetch(u, { cache: 'reload' }).then((r) => (r.ok ? c.put(u, r) : null)).catch(() => null))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {
@@ -125,7 +129,7 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   e.respondWith(
-    fetch(req)
+    fetch(req, { cache: 'no-cache' })
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();
