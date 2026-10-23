@@ -1,6 +1,6 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
 import { Store, idbGet, idbSet, idbClear } from './storage.js';
-import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback } from './net.js';
+import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js';
 import { loadM3U, xtreamFromM3uUrl } from './m3u.js';
 import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js';
 import { initNav, focusFirst, focusEl } from './nav.js';
@@ -81,6 +81,12 @@ function hideLoading() { $('#loading').hidden = true; }
 
 function setData(d) {
   DATA = d;
+  if (d.mirrorHost && Store.cfg?.server) {
+    try { registerHostMirror(new URL(normServer(Store.cfg.server)).hostname, d.mirrorHost); } catch {}
+  }
+  if (Store.cfg?.server) {
+    try { resolveHostIp(new URL(normServer(Store.cfg.server)).hostname); } catch {}
+  }
   INDEX = new Map();
   for (const i of d.live) INDEX.set(i.id, i);
   for (const i of d.movies) INDEX.set(i.id, i);

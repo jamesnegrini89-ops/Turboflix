@@ -60,25 +60,26 @@ export async function resolveHostIp(hostname) {
   return null;
 }
 
-/** Retorna a URL original + espelho do painel + IP resolvido via DNS-over-HTTPS. */
+/** Retorna a URL com o espelho desbloqueado e o IP resolvido ANTES do domínio original (que pode estar bloqueado no DNS da operadora). */
 export function withIpFallback(url) {
-  const out = [url];
+  const out = [];
   try {
     const u = new URL(url);
     const h = u.hostname.toLowerCase();
     const mirror = HOST_MIRRORS.get(h);
-    if (mirror) {
-      const um = new URL(url);
-      um.hostname = mirror;
-      out.push(um.toString());
-    }
     const ip = DNS_CACHE.get(h) || (mirror && DNS_CACHE.get(mirror));
     if (ip && ip !== h) {
       const ui = new URL(url);
       ui.hostname = ip;
       out.push(ui.toString());
     }
+    if (mirror) {
+      const um = new URL(url);
+      um.hostname = mirror;
+      out.push(um.toString());
+    }
   } catch { /* ignore */ }
+  out.push(url);
   return [...new Set(out)];
 }
 

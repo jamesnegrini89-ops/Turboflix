@@ -1,9 +1,9 @@
 // Player de vídeo otimizado para abertura instantânea (low-latency):
 // - MPEG-TS (.ts) com stashBuffer reduzido (64 KB) para começar no primeiro keyframe (~1-2s)
 // - HLS (.m3u8) começando no último segmento ao vivo com buffer inicial mínimo
-// - Pré-carregamento antecipado de hls.js e mpegts.js na inicialização do app
+// - Pré-resolução de DNS (DoH) antes de tocar filmes/séries MP4/MKV
 import { Store } from './storage.js';
-import { proxify, isMixed, hasProxy, esc } from './net.js';
+import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js';
 import { icon } from './icons.js';
 
 const $ = (id) => document.getElementById(id);
@@ -37,8 +37,15 @@ function kindOf(url, live) {
   return live ? ['ts', 'hls'] : ['native', 'hls'];
 }
 
-function buildCandidates(item) {
-  const raws = resolveUrls(item).filter(Boolean);
+async function prepareCandidates(item) {
+  const baseUrls = resolveUrls(item).filter(Boolean);
+  // Garante que o hostname (ex.: conectdg26.me) já esteja resolvido via DNS-over-HTTPS
+  // mesmo quando a lista veio do cache do IndexedDB!
+  for (const u of baseUrls) {
+    try { await resolveHostIp(new URL(u).hostname); } catch {}
+  }
+  const raws = [];
+  for (const u of baseUrls) raws.push(...withIpFallback(u));
   const out = [];
   const live = item.type === 'live';
 
@@ -49,7 +56,7 @@ function buildCandidates(item) {
     }
   }
 
-  // 2) Tenta conexão direta (priorizando o formato escolhido sem duplicar tentativas inúteis)
+  // 2) Tenta conexão direta (com IP/espelho prioritário se o domínio estiver bloqueado na operadora)
   for (const u of raws) {
     kindOf(u, live).forEach((k) => out.push({ url: u, kind: k, mixed: isMixed(u) }));
   }
@@ -93,12 +100,7 @@ function fail(reason) {
   if (!S) return;
   console.warn('Tentativa falhou no player:', reason, S.cands[S.ci]);
   if (S.ci + 1 < S.cands.length) { S.ci++; playCandidate(); return; }
-  const anyMixed = S.cands.some((c) => c.mixed) && !hasProxy();
-  if (anyMixed) {
-    showError('O vídeo usa "http://" e o navegador bloqueou por estar em uma página "https://".', true);
-  } else {
-    showError('O canal ou vídeo pode estar fora do ar, com limite de conexões atingido ou em formato incompatível.');
-  }
+  showError('O canal ou vídeo pode estar fora do ar, com limite de conexões (1 tela) em uso ou em formato incompatível.');
 }
 
 async function playCandidate() {
@@ -110,9 +112,9 @@ async function playCandidate() {
   S.recovered = false;
   const token = (S.token = Math.random());
   const live = S.item.type === 'live';
-  // Timeout curto (9s) na primeira tentativa para pular rápido para a rota alternativa se falhar
-  const waitMs = S.ci === 0 ? 9000 : 14000;
-  stallTimer = setTimeout(() => { if (S && S.token === token && video.readyState < 2) fail('timeout'); }, waitMs);
+  // Timeout para tentar próxima rota caso o servidor demore (filmes MP4 de 2.5GB podem levar ~10-15s no redirect)
+  const waitMs = live ? (S.ci === 0 ? 9000 : 14000) : 22000;
+  stallTimer = setTimeout(() => { if (S && S.token === token && video.readyState < 1) fail('timeout'); }, waitMs);
 
   try {
     if (c.kind === 'ts') {
@@ -244,8 +246,9 @@ function playNextEpisode(step = 1) {
   return true;
 }
 
-function start(item, opts = {}) {
-  S = { item, list: opts.list || [], start: opts.start || 0, cands: buildCandidates(item), ci: 0, started: false };
+async function start(item, opts = {}) {
+  const startToken = Math.random();
+  S = { item, list: opts.list || [], start: opts.start || 0, cands: [], ci: 0, started: false, startToken };
   const live = item.type === 'live';
   $('p-title').textContent = item.name;
   $('p-sub').textContent = item.seriesName ? item.seriesName : (item.group || '');
@@ -259,8 +262,12 @@ function start(item, opts = {}) {
   $('p-time').textContent = '';
   updateFavIcon();
   showOverlay();
-  playCandidate();
+  spinner(true);
   onChange(item);
+  const cands = await prepareCandidates(item);
+  if (!S || S.startToken !== startToken) return;
+  S.cands = cands;
+  playCandidate();
 }
 
 export const Player = {
