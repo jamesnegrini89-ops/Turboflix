@@ -1,6 +1,6 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
 import { Store, idbGet, idbSet, idbClear } from './storage.js';
-import { esc, imgUrl, norm, hash, hasProxy, isMixed } from './net.js';
+import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy } from './net.js';
 import { loadM3U, xtreamFromM3uUrl } from './m3u.js';
 import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js';
 import { initNav, focusFirst, focusEl } from './nav.js';
@@ -653,13 +653,13 @@ function renderLogin() {
           <input class="field focusable" id="xt-user" type="text" placeholder="Usuário" value="${esc(cfg.user || '')}" autocomplete="username" autocapitalize="off">
           <input class="field focusable" id="xt-pass" type="password" placeholder="Senha" value="${esc(cfg.pass || '')}" autocomplete="current-password">
         </form>
-        <details class="adv" ${Store.settings.proxy ? 'open' : ''}>
-          <summary class="focusable" tabindex="0">Proxy (opcional, para links http:// ou bloqueados)</summary>
-          <input class="field focusable" id="login-proxy" type="url" placeholder="https://seu-proxy.workers.dev" value="${esc(Store.settings.proxy)}">
+        <details class="adv">
+          <summary class="focusable" tabindex="0">Cloudflare Worker Proxy próprio (opcional — deixe em branco)</summary>
+          <input class="field focusable" id="login-proxy" type="url" placeholder="Deixe em branco (ou https://seu-worker.workers.dev)" value="${esc(cleanProxy(Store.settings.proxy))}">
+          <p class="dim small" style="margin:6px 2px 0">Não coloque IP:porta aqui. Deixe em branco para usar a conexão automática.</p>
         </details>
         <button class="btn primary wide focusable" data-act="login">Entrar</button>
         <div class="login-err" id="login-err" hidden></div>
-        ${location.protocol === 'https:' ? `<p class="dim small">Aberto em https: links <b>http://</b> precisam do proxy (veja o README).</p>` : ''}
       </div>
     </div>`;
   view.querySelectorAll('form').forEach((f) => f.addEventListener('submit', (e) => { e.preventDefault(); doLogin(); }));
@@ -669,8 +669,15 @@ function renderLogin() {
 async function doLogin() {
   const err = $('#login-err');
   err.hidden = true;
-  const proxy = ($('#login-proxy')?.value || '').trim();
-  Store.setSetting('proxy', proxy);
+  const rawProxy = ($('#login-proxy')?.value || '').trim();
+  if (rawProxy && !cleanProxy(rawProxy)) {
+    err.textContent = 'O campo Proxy aceita apenas um endereço https:// de Cloudflare Worker (não coloque IP:porta). Deixe o campo Proxy em branco e clique em Entrar.';
+    err.hidden = false;
+    $('#login-proxy').value = '';
+    Store.setSetting('proxy', '');
+    return;
+  }
+  Store.setSetting('proxy', cleanProxy(rawProxy));
   const isXt = !$('#f-xt').hidden;
   let cfg, alt = null;
   if (isXt) {

@@ -29,22 +29,45 @@ const fmtTime = (t) => {
 
 function kindOf(url, live) {
   const u = decodeURIComponent(url).split('?')[0].toLowerCase();
-  if (u.endsWith('.m3u8') || u.includes('.m3u8')) return ['hls'];
-  if (u.endsWith('.ts')) return ['ts', 'hls'];
-  if (/\.(mp4|mkv|webm|mov|m4v|avi|mp3|aac)$/.test(u)) return ['native'];
-  return live ? ['ts', 'hls', 'native'] : ['native', 'hls'];
+  if (u.endsWith('.m3u8') || u.includes('.m3u8') || /output=(m3u8|hls)/i.test(url)) return ['hls', 'ts', 'native'];
+  if (u.endsWith('.ts') || /output=ts/i.test(url)) return ['ts', 'hls', 'native'];
+  if (/\.(mp4|mkv|webm|mov|m4v|avi|mp3|aac)$/.test(u)) return ['native', 'hls'];
+  return live ? ['ts', 'hls', 'native'] : ['native', 'hls', 'ts'];
 }
 
 function buildCandidates(item) {
   const raws = resolveUrls(item).filter(Boolean);
   const out = [];
   const live = item.type === 'live';
-  for (const u of raws) if (!isMixed(u)) kindOf(u, live).forEach((k) => out.push({ url: u, kind: k }));
-  if (hasProxy()) for (const u of raws) kindOf(u, live).forEach((k) => out.push({ url: proxify(u), kind: k, proxied: true }));
-  if (!out.length && raws.length) raws.forEach((u) => out.push({ url: u, kind: kindOf(u, live)[0], blocked: true }));
-  // remove duplicados
+
+  // 1) Se tiver proxy próprio configurado (Cloudflare Worker), usa primeiro para links http:// em https://
+  if (hasProxy()) {
+    for (const u of raws) {
+      if (isMixed(u)) kindOf(u, live).forEach((k) => out.push({ url: proxify(u), kind: k, proxied: true }));
+    }
+  }
+
+  // 2) Tenta conexão direta (funciona em https, localhost ou quando "Conteúdo inseguro" está liberado no navegador)
+  for (const u of raws) {
+    kindOf(u, live).forEach((k) => out.push({ url: u, kind: k, mixed: isMixed(u) }));
+  }
+
+  // 3) Se tiver proxy próprio configurado, tenta também para links não-mistos como fallback CORS
+  if (hasProxy()) {
+    for (const u of raws) {
+      if (!isMixed(u)) kindOf(u, live).forEach((k) => out.push({ url: proxify(u), kind: k, proxied: true }));
+    }
+  }
+
+  // 4) Para listas HLS (.m3u8) em http:// sem proxy próprio, tenta via ponte pública
+  for (const u of raws) {
+    if (isMixed(u)) {
+      out.push({ url: `https://corsproxy.io/?${encodeURIComponent(u)}`, kind: 'hls', proxied: true });
+    }
+  }
+
   const seen = new Set();
-  return out.filter((c) => { const k = c.url + c.kind; if (seen.has(k)) return false; seen.add(k); return true; });
+  return out.filter((c) => { const k = c.url + '|' + c.kind; if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
 function teardown() {
@@ -56,11 +79,19 @@ function teardown() {
 
 function spinner(on) { $('p-spinner').hidden = !on; }
 
-function showError(msg) {
+function showError(msg, mixedHelp = false) {
   spinner(false);
   const box = $('p-error');
-  box.innerHTML = `<div>${icon('tv')}<h3>Não foi possível reproduzir</h3><p>${esc(msg)}</p>
-    <p class="dim">Pressione VOLTAR para sair${S?.item.type === 'live' ? ' ou ▲/▼ para trocar de canal' : ''}.</p></div>`;
+  const helpHtml = mixedHelp ? `
+    <div style="margin-top:12px;padding:12px 16px;background:rgba(155,77,255,.18);border:1px solid rgba(199,155,255,.4);border-radius:12px;text-align:left;max-width:560px;font-size:13px;line-height:1.45">
+      <b>Como liberar vídeos HTTP no navegador (leva 10 segundos):</b><br>
+      1. Clique no ícone de <b>cadeado / ajustes</b> ao lado do endereço <code>${esc(location.host)}</code> na barra do navegador.<br>
+      2. Clique em <b>Configurações do site</b> (ou Permissões).<br>
+      3. Em <b>Conteúdo inseguro (Insecure content)</b>, mude para <b>Permitir</b> e recarregue a página.<br>
+      <span class="dim">(Ou configure um Cloudflare Worker gratuito em Configurações → Proxy).</span>
+    </div>` : '';
+  box.innerHTML = `<div>${icon('tv')}<h3>Não foi possível reproduzir</h3><p>${esc(msg)}</p>${helpHtml}
+    <p class="dim" style="margin-top:12px">Pressione VOLTAR para sair${S?.item.type === 'live' ? ' ou ▲/▼ para trocar de canal' : ''}.</p></div>`;
   box.hidden = false;
 }
 
@@ -68,11 +99,12 @@ function fail(reason) {
   if (!S) return;
   console.warn('Falha no player:', reason, S.cands[S.ci]);
   if (S.ci + 1 < S.cands.length) { S.ci++; playCandidate(); return; }
-  const c = S.cands[S.ci];
-  let msg = 'O canal/vídeo pode estar fora do ar ou em um formato não suportado pelo navegador.';
-  if (c?.blocked) msg = 'O link usa "http://" e o app está em "https://". Configure um Proxy em Configurações.';
-  else if (!hasProxy()) msg += ' Se o problema for CORS, configure um Proxy em Configurações.';
-  showError(msg);
+  const anyMixed = S.cands.some((c) => c.mixed) && !hasProxy();
+  if (anyMixed) {
+    showError('O vídeo usa "http://" e o navegador bloqueou por estar em uma página "https://".', true);
+  } else {
+    showError('O canal ou vídeo pode estar fora do ar, com limite de conexões atingido ou em formato incompatível.');
+  }
 }
 
 async function playCandidate() {
@@ -84,7 +116,7 @@ async function playCandidate() {
   S.recovered = false;
   const token = (S.token = Math.random());
   const live = S.item.type === 'live';
-  stallTimer = setTimeout(() => { if (S && S.token === token && video.readyState < 3) fail('timeout'); }, 25000);
+  stallTimer = setTimeout(() => { if (S && S.token === token && video.readyState < 3) fail('timeout'); }, 18000);
 
   try {
     if (c.kind === 'hls') {
@@ -93,7 +125,7 @@ async function playCandidate() {
         const Hls = await loadLib('hls');
         if (S?.token !== token) return;
         if (Hls.isSupported()) {
-          hls = new Hls({ enableWorker: true, backBufferLength: 30, maxBufferLength: 30, manifestLoadingMaxRetry: 2, levelLoadingMaxRetry: 2 });
+          hls = new Hls({ enableWorker: true, backBufferLength: 30, maxBufferLength: 30, manifestLoadingMaxRetry: 1, levelLoadingMaxRetry: 1 });
           hls.on(Hls.Events.ERROR, (_, d) => {
             if (!d.fatal) return;
             if (d.type === Hls.ErrorTypes.MEDIA_ERROR && !S.recovered) { S.recovered = true; hls.recoverMediaError(); }
@@ -112,7 +144,7 @@ async function playCandidate() {
       const mpegts = await loadLib('mpegts');
       if (S?.token !== token) return;
       if (mpegts.isSupported()) {
-        mts = mpegts.createPlayer({ type: 'mpegts', isLive: live, url: c.url },
+        mts = mpegts.createPlayer({ type: 'mpegts', isLive: live, url: c.url, cors: true },
           { enableWorker: true, lazyLoad: false, liveBufferLatencyChasing: live, autoCleanupSourceBuffer: true });
         mts.attachMediaElement(video);
         mts.on(mpegts.Events.ERROR, (t, d) => fail('ts:' + t + ' ' + d));
