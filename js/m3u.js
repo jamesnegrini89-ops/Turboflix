@@ -109,8 +109,15 @@ export function xtreamFromM3uUrl(url) {
     const u = new URL(url);
     const user = u.searchParams.get('username');
     const pass = u.searchParams.get('password');
+    const output = (u.searchParams.get('output') || '').toLowerCase();
     if (user && pass && /get\.php/i.test(u.pathname)) {
-      return { type: 'xtream', server: `${u.protocol}//${u.host}`, user, pass };
+      return {
+        type: 'xtream',
+        server: `${u.protocol}//${u.host}`,
+        user,
+        pass,
+        preferredOutput: output === 'ts' ? 'ts' : output === 'm3u8' || output === 'hls' ? 'm3u8' : ''
+      };
     }
   } catch { /* ignore */ }
   return null;

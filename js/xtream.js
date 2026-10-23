@@ -1,5 +1,5 @@
 // Cliente da API Xtream Codes (player_api.php).
-import { fetchJSON, resolveHostIp, withIpFallback } from './net.js';
+import { fetchJSON, resolveHostIp, withIpFallback, registerHostMirror } from './net.js';
 import { Store } from './storage.js';
 
 export function normServer(s) {
@@ -8,21 +8,29 @@ export function normServer(s) {
   return v.replace(/\/(player_api|get)\.php.*$/i, '');
 }
 
-async function api(cfg, action = '', extra = '') {
+async function api(cfg, action = '', extra = '', timeoutMs = 90000) {
   const base = normServer(cfg.server);
   try { await resolveHostIp(new URL(base).hostname); } catch {}
   const q = `username=${encodeURIComponent(cfg.user)}&password=${encodeURIComponent(cfg.pass)}`;
-  return fetchJSON(`${base}/player_api.php?${q}${action ? '&action=' + action : ''}${extra}`);
+  return fetchJSON(`${base}/player_api.php?${q}${action ? '&action=' + action : ''}${extra}`, timeoutMs);
 }
 
 const arr = (v) => (Array.isArray(v) ? v : v && typeof v === 'object' ? Object.values(v) : []);
 
 export async function loginXtream(cfg) {
-  const r = await api(cfg);
+  const r = await api(cfg, '', '', 30000);
   if (!r || !r.user_info) throw new Error('Servidor não respondeu como Xtream Codes. Verifique o endereço.');
   if (String(r.user_info.auth) === '0') throw new Error('Usuário ou senha inválidos.');
   if (r.user_info.status && !/active/i.test(r.user_info.status)) {
     throw new Error(`Conta ${r.user_info.status} (não ativa).`);
+  }
+  // Muitos painéis XUI informam um domínio espelho em server_info.url que não está bloqueado no DNS da operadora
+  if (r.server_info?.url) {
+    try {
+      const origHost = new URL(normServer(cfg.server)).hostname;
+      registerHostMirror(origHost, r.server_info.url);
+      resolveHostIp(r.server_info.url);
+    } catch {}
   }
   return r;
 }
@@ -31,21 +39,30 @@ export async function loadXtream(cfg, progress = () => {}) {
   progress('Conectando ao servidor...');
   const info = await loginXtream(cfg);
 
-  progress('Baixando categorias...');
-  const [lc, vc, sc] = await Promise.all([
-    api(cfg, 'get_live_categories').catch(() => []),
-    api(cfg, 'get_vod_categories').catch(() => []),
-    api(cfg, 'get_series_categories').catch(() => [])
-  ]);
+  // Importante: servidores IPTV costumam ter max_connections=1 e derrubam requisições simultâneas!
+  // Por isso buscamos sequencialmente (uma por vez) com timeout generoso para catálogos grandes (~30 MB).
+  progress('Baixando categorias de TV, Filmes e Séries...');
+  const lc = await api(cfg, 'get_live_categories', '', 40000).catch(() => []);
+  const vc = await api(cfg, 'get_vod_categories', '', 40000).catch(() => []);
+  const sc = await api(cfg, 'get_series_categories', '', 40000).catch(() => []);
+
   const catName = (list) => { const m = {}; arr(list).forEach((c) => (m[c.category_id] = c.category_name)); return m; };
   const lcm = catName(lc), vcm = catName(vc), scm = catName(sc);
 
-  progress('Baixando canais ao vivo...');
-  const ls = arr(await api(cfg, 'get_live_streams').catch(() => []));
-  progress('Baixando filmes...');
-  const vs = arr(await api(cfg, 'get_vod_streams').catch(() => []));
-  progress('Baixando séries...');
-  const ss = arr(await api(cfg, 'get_series').catch(() => []));
+  progress('Baixando canais de TV ao vivo...');
+  let lastStreamErr = null;
+  const ls = arr(await api(cfg, 'get_live_streams', '', 90000).catch((e) => { lastStreamErr = e; return []; }));
+
+  progress(`Baixando catálogo de filmes (${ls.length.toLocaleString('pt-BR')} canais carregados)...`);
+  const vs = arr(await api(cfg, 'get_vod_streams', '', 120000).catch((e) => { lastStreamErr = e; return []; }));
+
+  progress(`Baixando catálogo de séries (${vs.length.toLocaleString('pt-BR')} filmes carregados)...`);
+  const ss = arr(await api(cfg, 'get_series', '', 90000).catch((e) => { lastStreamErr = e; return []; }));
+
+  // Se todas as 3 listas vieram vazias e houve erro de rede/bloqueio, não salva vazio no cache!
+  if (!ls.length && !vs.length && !ss.length && lastStreamErr) {
+    throw lastStreamErr;
+  }
 
   // Mantém a ordem das categorias definida no painel
   const order = (list, m) => { const o = {}; arr(list).forEach((c, i) => (o[m[c.category_id]] = i)); return o; };
@@ -71,17 +88,18 @@ export async function loadXtream(cfg, progress = () => {}) {
 
   return {
     source: 'xtream', live, movies, series, episodes: {}, loadedAt: Date.now(),
+    mirrorHost: info.server_info?.url || '',
     account: { exp: info.user_info.exp_date, max: info.user_info.max_connections, status: info.user_info.status }
   };
 }
 
-/** URLs de reprodução (em ordem de tentativa, incluindo IP direto caso o DNS da operadora bloqueie) para um item Xtream. */
+/** URLs de reprodução (em ordem de tentativa, incluindo espelho e IP direto) para um item Xtream. */
 export function xtreamUrls(cfg, item) {
   const base = normServer(cfg.server);
   const up = `${encodeURIComponent(cfg.user)}/${encodeURIComponent(cfg.pass)}`;
+  const fmt = cfg.preferredOutput || Store.settings.liveFormat;
   let primary = [];
   if (item.type === 'live') {
-    const fmt = Store.settings.liveFormat;
     const m3u8 = `${base}/live/${up}/${item.sid}.m3u8`;
     const ts = `${base}/live/${up}/${item.sid}.ts`;
     primary = fmt === 'ts' ? [ts, m3u8] : [m3u8, ts];
@@ -96,12 +114,12 @@ export function xtreamUrls(cfg, item) {
 }
 
 export async function xtreamVodInfo(cfg, vodId) {
-  const r = await api(cfg, 'get_vod_info', `&vod_id=${vodId}`);
+  const r = await api(cfg, 'get_vod_info', `&vod_id=${vodId}`, 30000);
   return r?.info || {};
 }
 
 export async function xtreamSeriesInfo(cfg, series) {
-  const r = await api(cfg, 'get_series_info', `&series_id=${series.sid}`);
+  const r = await api(cfg, 'get_series_info', `&series_id=${series.sid}`, 40000);
   const base = normServer(cfg.server);
   const up = `${encodeURIComponent(cfg.user)}/${encodeURIComponent(cfg.pass)}`;
   const eps = [];

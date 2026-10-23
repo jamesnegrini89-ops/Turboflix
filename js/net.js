@@ -1,10 +1,11 @@
-// Rede: requisições diretas, resolução DNS-over-HTTPS automática (contra bloqueio de DNS da operadora)
+// Rede: requisições diretas, espelho real do servidor (server_info.url),
+// resolução DNS-over-HTTPS automática (contra bloqueio de DNS da operadora)
 // e suporte opcional a Proxy HTTPS (Cloudflare Worker).
 import { Store } from './storage.js';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-/** A página está em https e o link é http? (o navegador bloqueia se "Conteúdo inseguro" não estiver liberado) */
+/** A página está em https e o link é http? */
 export const isMixed = (url) => location.protocol === 'https:' && /^http:\/\//i.test(url || '');
 
 /** Normaliza a URL do proxy customizado (ignora IP:porta sem http ou proxies SOCKS :1080). */
@@ -27,16 +28,22 @@ export function proxify(url, customBase) {
   return p.replace(/\/+$/, '') + '/?url=' + encodeURIComponent(url);
 }
 
-// Cache de hostnames resolvidos via DNS-over-HTTPS (Google / Cloudflare)
-// Muitas operadoras no Brasil bloqueiam domínios IPTV no DNS padrão, mas o IP funciona!
+// Cache de hostnames resolvidos via DNS-over-HTTPS (Google / Cloudflare) e espelhos do servidor
 const DNS_CACHE = new Map();
+const HOST_MIRRORS = new Map(); // hostname original -> hostname alternativo (ex.: server_info.url)
+
+export function registerHostMirror(originalHost, mirrorHost) {
+  if (!originalHost || !mirrorHost || originalHost === mirrorHost) return;
+  HOST_MIRRORS.set(originalHost.toLowerCase(), mirrorHost.toLowerCase());
+}
 
 export async function resolveHostIp(hostname) {
   if (!hostname || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname === 'localhost') return null;
-  if (DNS_CACHE.has(hostname)) return DNS_CACHE.get(hostname);
+  const key = hostname.toLowerCase();
+  if (DNS_CACHE.has(key)) return DNS_CACHE.get(key);
   const endpoints = [
-    `https://dns.google/resolve?name=${encodeURIComponent(hostname)}&type=A`,
-    `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=A`
+    `https://dns.google/resolve?name=${encodeURIComponent(key)}&type=A`,
+    `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(key)}&type=A`
   ];
   for (const ep of endpoints) {
     try {
@@ -45,7 +52,7 @@ export async function resolveHostIp(hostname) {
       const j = await r.json();
       const ans = (j.Answer || []).find((a) => a.type === 1 && /^\d+\.\d+\.\d+\.\d+$/.test(a.data));
       if (ans) {
-        DNS_CACHE.set(hostname, ans.data);
+        DNS_CACHE.set(key, ans.data);
         return ans.data;
       }
     } catch { /* ignore */ }
@@ -53,45 +60,60 @@ export async function resolveHostIp(hostname) {
   return null;
 }
 
-/** Se o domínio estiver salvo no cache de DNS, retorna também a variante com IP direto. */
+/** Retorna a URL original + espelho do painel + IP resolvido via DNS-over-HTTPS. */
 export function withIpFallback(url) {
+  const out = [url];
   try {
     const u = new URL(url);
-    const ip = DNS_CACHE.get(u.hostname);
-    if (ip && ip !== u.hostname) {
-      const u2 = new URL(url);
-      u2.hostname = ip;
-      return [url, u2.toString()];
+    const h = u.hostname.toLowerCase();
+    const mirror = HOST_MIRRORS.get(h);
+    if (mirror) {
+      const um = new URL(url);
+      um.hostname = mirror;
+      out.push(um.toString());
+    }
+    const ip = DNS_CACHE.get(h) || (mirror && DNS_CACHE.get(mirror));
+    if (ip && ip !== h) {
+      const ui = new URL(url);
+      ui.hostname = ip;
+      out.push(ui.toString());
     }
   } catch { /* ignore */ }
-  return [url];
+  return [...new Set(out)];
 }
 
-/** Lista todas as URLs de tentativa para buscar uma URL (direta -> IP via DoH -> proxy). */
+/** Lista todas as URLs de tentativa para buscar uma URL (direta -> espelho -> IP via DoH -> proxy). */
 export async function buildFetchCandidates(url) {
   const list = [];
   const custom = cleanProxy();
   if (custom) list.push(proxify(url, custom));
 
-  // Tenta URL direta primeiro (funciona quando Conteúdo Inseguro está liberado no navegador)
-  list.push(url);
-
-  // Resolve o IP via DNS do Google/Cloudflare caso o DNS da operadora bloqueie o domínio (ex.: conectdg26.me)
   try {
     const u = new URL(url);
-    const ip = await resolveHostIp(u.hostname);
-    if (ip && ip !== u.hostname) {
+    const h = u.hostname.toLowerCase();
+    // Se já sabemos que um espelho/IP funcionou antes, prioriza
+    const mirror = HOST_MIRRORS.get(h);
+    if (mirror) {
+      const um = new URL(url);
+      um.hostname = mirror;
+      list.push(um.toString());
+    }
+    list.push(url);
+    const ip = await resolveHostIp(h);
+    if (ip && ip !== h) {
       const byIp = new URL(url);
       byIp.hostname = ip;
       list.push(byIp.toString());
       if (custom) list.unshift(proxify(byIp.toString(), custom));
     }
-  } catch { /* ignore */ }
+  } catch {
+    list.push(url);
+  }
 
   return [...new Set(list)];
 }
 
-/** URL de imagem: usa wsrv.nl quando a imagem é http:// numa página https://. */
+/** URL de imagem: usa wsrv.nl com o IP resolvido quando a imagem é http:// numa página https://. */
 export function imgUrl(u) {
   if (!u) return '';
   if (isMixed(u)) {
@@ -122,7 +144,7 @@ function makeFriendlyError(url, lastErr) {
   if (isMixed(url) && !hasProxy()) {
     const err = new Error(
       'O navegador bloqueou a conexão porque sua lista usa "http://" e o GitHub Pages usa "https://". ' +
-      'Libere "Conteúdo inseguro" nas configurações do site (veja o passo a passo abaixo) e clique em Entrar novamente.'
+      'Libere "Conteúdo inseguro → Permitir" nas Configurações do site (ícone ao lado da barra de endereço) e recarregue a página.'
     );
     err.code = 'MIXED_CONTENT';
     return err;
@@ -130,7 +152,7 @@ function makeFriendlyError(url, lastErr) {
   return new Error(`Não foi possível conectar ao servidor (${msg}). Verifique sua conexão ou se o servidor está online.`);
 }
 
-export async function fetchText(url, ms = 45000) {
+export async function fetchText(url, ms = 120000) {
   const tries = await buildFetchCandidates(url);
   let lastErr;
   for (const u of tries) {
@@ -145,7 +167,7 @@ export async function fetchText(url, ms = 45000) {
   throw makeFriendlyError(url, lastErr);
 }
 
-export async function fetchJSON(url, ms = 35000) {
+export async function fetchJSON(url, ms = 90000) {
   const tries = await buildFetchCandidates(url);
   let lastErr;
   for (const u of tries) {

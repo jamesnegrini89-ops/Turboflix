@@ -206,17 +206,19 @@ async function loadData(force) {
   const key = cacheKey(cfg);
   if (!force) {
     const c = await idbGet(key);
-    if (c && Date.now() - c.loadedAt < Store.settings.cacheHours * 3600e3) { setData(c); return true; }
+    const hasItems = c && ((c.live && c.live.length) || (c.movies && c.movies.length) || (c.series && c.series.length));
+    if (hasItems && Date.now() - c.loadedAt < Store.settings.cacheHours * 3600e3) { setData(c); return true; }
   }
   showLoading('Carregando sua lista...');
   try {
     const d = await fetchData(cfg);
     setData(d);
-    idbSet(key, d);
+    if (d.live.length || d.movies.length || d.series.length) idbSet(key, d);
     return true;
   } catch (e) {
     const c = await idbGet(key);
-    if (c) { setData(c); toast('Não foi possível atualizar. Usando a lista salva.'); return true; }
+    const hasItems = c && ((c.live && c.live.length) || (c.movies && c.movies.length) || (c.series && c.series.length));
+    if (hasItems) { setData(c); toast('Não foi possível atualizar. Usando a lista salva.'); return true; }
     renderLoadError(e.message);
     return false;
   } finally { hideLoading(); }
@@ -703,11 +705,21 @@ async function doLogin() {
   showLoading('Conectando...');
   try {
     let d;
-    try { d = await fetchData(cfg); }
-    catch (e) { if (!alt) throw e; cfg = alt; d = await fetchData(cfg); }
+    try {
+      d = await fetchData(cfg);
+      if (!d.live.length && !d.movies.length && !d.series.length && alt) {
+        cfg = alt;
+        d = await fetchData(cfg);
+      }
+    } catch (e) {
+      if (!alt) throw e;
+      cfg = alt;
+      d = await fetchData(cfg);
+    }
+    if (cfg.preferredOutput) Store.setSetting('liveFormat', cfg.preferredOutput);
     Store.cfg = cfg;
     setData(d);
-    idbSet(cacheKey(cfg), d);
+    if (d.live.length || d.movies.length || d.series.length) idbSet(cacheKey(cfg), d);
     hideLoading();
     toast(`Lista carregada: ${fmtN(d.live.length)} canais, ${fmtN(d.movies.length)} filmes, ${fmtN(d.series.length)} séries`, 4000);
     lastHash = '';
