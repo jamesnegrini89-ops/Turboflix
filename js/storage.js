@@ -12,7 +12,7 @@ function write(key, val) {
 
 const DEFAULT_SETTINGS = {
   proxy: '',            // URL do proxy (Cloudflare Worker) - opcional
-  liveFormat: 'm3u8',   // formato preferido dos canais Xtream: m3u8 ou ts
+  liveFormat: 'ts',     // formato preferido dos canais Xtream: 'ts' abre direto sem esperar playlist HLS
   cacheHours: 12        // tempo que a lista fica em cache antes de recarregar
 };
 

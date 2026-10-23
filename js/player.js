@@ -1,5 +1,7 @@
-// Player de vídeo: HLS (hls.js), MPEG-TS (mpegts.js) e arquivos diretos (mp4/mkv...).
-// Tenta automaticamente formatos/rotas alternativas quando um link falha.
+// Player de vídeo otimizado para abertura instantânea (low-latency):
+// - MPEG-TS (.ts) com stashBuffer reduzido (64 KB) para começar no primeiro keyframe (~1-2s)
+// - HLS (.m3u8) começando no último segmento ao vivo com buffer inicial mínimo
+// - Pré-carregamento antecipado de hls.js e mpegts.js na inicialização do app
 import { Store } from './storage.js';
 import { proxify, isMixed, hasProxy, esc } from './net.js';
 import { icon } from './icons.js';
@@ -29,10 +31,10 @@ const fmtTime = (t) => {
 
 function kindOf(url, live) {
   const u = decodeURIComponent(url).split('?')[0].toLowerCase();
-  if (u.endsWith('.m3u8') || u.includes('.m3u8') || /output=(m3u8|hls)/i.test(url)) return ['hls', 'ts', 'native'];
-  if (u.endsWith('.ts') || /output=ts/i.test(url)) return ['ts', 'hls', 'native'];
-  if (/\.(mp4|mkv|webm|mov|m4v|avi|mp3|aac)$/.test(u)) return ['native', 'hls'];
-  return live ? ['ts', 'hls', 'native'] : ['native', 'hls', 'ts'];
+  if (u.endsWith('.m3u8') || u.includes('.m3u8') || /output=(m3u8|hls)/i.test(url)) return ['hls'];
+  if (u.endsWith('.ts') || /output=ts/i.test(url)) return ['ts'];
+  if (/\.(mp4|mkv|webm|mov|m4v|avi|mp3|aac)$/.test(u)) return ['native'];
+  return live ? ['ts', 'hls'] : ['native', 'hls'];
 }
 
 function buildCandidates(item) {
@@ -47,7 +49,7 @@ function buildCandidates(item) {
     }
   }
 
-  // 2) Tenta conexão direta (funciona em https, localhost ou quando "Conteúdo inseguro" está liberado no navegador)
+  // 2) Tenta conexão direta (priorizando o formato escolhido sem duplicar tentativas inúteis)
   for (const u of raws) {
     kindOf(u, live).forEach((k) => out.push({ url: u, kind: k, mixed: isMixed(u) }));
   }
@@ -56,13 +58,6 @@ function buildCandidates(item) {
   if (hasProxy()) {
     for (const u of raws) {
       if (!isMixed(u)) kindOf(u, live).forEach((k) => out.push({ url: proxify(u), kind: k, proxied: true }));
-    }
-  }
-
-  // 4) Para listas HLS (.m3u8) em http:// sem proxy próprio, tenta via ponte pública
-  for (const u of raws) {
-    if (isMixed(u)) {
-      out.push({ url: `https://corsproxy.io/?${encodeURIComponent(u)}`, kind: 'hls', proxied: true });
     }
   }
 
@@ -87,8 +82,7 @@ function showError(msg, mixedHelp = false) {
       <b>Como liberar vídeos HTTP no navegador (leva 10 segundos):</b><br>
       1. Clique no ícone de <b>cadeado / ajustes</b> ao lado do endereço <code>${esc(location.host)}</code> na barra do navegador.<br>
       2. Clique em <b>Configurações do site</b> (ou Permissões).<br>
-      3. Em <b>Conteúdo inseguro (Insecure content)</b>, mude para <b>Permitir</b> e recarregue a página.<br>
-      <span class="dim">(Ou configure um Cloudflare Worker gratuito em Configurações → Proxy).</span>
+      3. Em <b>Conteúdo inseguro (Insecure content)</b>, mude para <b>Permitir</b> e recarregue a página.
     </div>` : '';
   box.innerHTML = `<div>${icon('tv')}<h3>Não foi possível reproduzir</h3><p>${esc(msg)}</p>${helpHtml}
     <p class="dim" style="margin-top:12px">Pressione VOLTAR para sair${S?.item.type === 'live' ? ' ou ▲/▼ para trocar de canal' : ''}.</p></div>`;
@@ -97,7 +91,7 @@ function showError(msg, mixedHelp = false) {
 
 function fail(reason) {
   if (!S) return;
-  console.warn('Falha no player:', reason, S.cands[S.ci]);
+  console.warn('Tentativa falhou no player:', reason, S.cands[S.ci]);
   if (S.ci + 1 < S.cands.length) { S.ci++; playCandidate(); return; }
   const anyMixed = S.cands.some((c) => c.mixed) && !hasProxy();
   if (anyMixed) {
@@ -116,16 +110,55 @@ async function playCandidate() {
   S.recovered = false;
   const token = (S.token = Math.random());
   const live = S.item.type === 'live';
-  stallTimer = setTimeout(() => { if (S && S.token === token && video.readyState < 3) fail('timeout'); }, 18000);
+  // Timeout curto (9s) na primeira tentativa para pular rápido para a rota alternativa se falhar
+  const waitMs = S.ci === 0 ? 9000 : 14000;
+  stallTimer = setTimeout(() => { if (S && S.token === token && video.readyState < 2) fail('timeout'); }, waitMs);
 
   try {
+    if (c.kind === 'ts') {
+      const mpegts = await loadLib('mpegts');
+      if (S?.token !== token) return;
+      if (mpegts.isSupported()) {
+        mts = mpegts.createPlayer(
+          { type: 'mpegts', isLive: live, url: c.url, cors: true },
+          {
+            enableWorker: true,
+            enableStashBuffer: true,
+            stashInitialSize: 65536,          // 64 KB (padrão é 384 KB): começa a tocar até 4x mais rápido!
+            lazyLoad: false,
+            liveBufferLatencyChasing: live,
+            liveBufferLatencyMaxLatency: 3.5,
+            liveBufferLatencyMinRemain: 0.8,
+            autoCleanupSourceBuffer: true
+          }
+        );
+        mts.attachMediaElement(video);
+        mts.on(mpegts.Events.ERROR, (t, d) => fail('ts:' + t + ' ' + d));
+        mts.load();
+        video.play().catch(() => {});
+        return;
+      }
+      fail('ts não suportado'); return;
+    }
     if (c.kind === 'hls') {
       const MSE = window.MediaSource || window.ManagedMediaSource;
       if (MSE) {
         const Hls = await loadLib('hls');
         if (S?.token !== token) return;
         if (Hls.isSupported()) {
-          hls = new Hls({ enableWorker: true, backBufferLength: 30, maxBufferLength: 30, manifestLoadingMaxRetry: 1, levelLoadingMaxRetry: 1 });
+          hls = new Hls({
+            enableWorker: true,
+            lowLatencyMode: false,
+            backBufferLength: 15,
+            maxBufferLength: 12,              // começa a reproduzir com poucos segundos de buffer
+            maxMaxBufferLength: 30,
+            liveSyncDurationCount: 1,         // pega o segmento mais recente sem esperar 3 segmentos
+            liveMaxLatencyDurationCount: 4,
+            startFragPrefetch: true,          // já pré-baixa o primeiro segmento junto com o manifesto
+            manifestLoadingMaxRetry: 1,
+            levelLoadingMaxRetry: 1,
+            fragLoadingMaxRetry: 1
+          });
           hls.on(Hls.Events.ERROR, (_, d) => {
             if (!d.fatal) return;
             if (d.type === Hls.ErrorTypes.MEDIA_ERROR && !S.recovered) { S.recovered = true; hls.recoverMediaError(); }
@@ -140,20 +173,8 @@ async function playCandidate() {
       if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = c.url; video.play().catch(() => {}); return; }
       fail('hls não suportado'); return;
     }
-    if (c.kind === 'ts') {
-      const mpegts = await loadLib('mpegts');
-      if (S?.token !== token) return;
-      if (mpegts.isSupported()) {
-        mts = mpegts.createPlayer({ type: 'mpegts', isLive: live, url: c.url, cors: true },
-          { enableWorker: true, lazyLoad: false, liveBufferLatencyChasing: live, autoCleanupSourceBuffer: true });
-        mts.attachMediaElement(video);
-        mts.on(mpegts.Events.ERROR, (t, d) => fail('ts:' + t + ' ' + d));
-        mts.load();
-        video.play().catch(() => {});
-        return;
-      }
-      fail('ts não suportado'); return;
-    }
+    // Vídeo direto (MP4 / MKV de filmes e séries)
+    video.preload = 'auto';
     video.src = c.url;
     video.play().catch(() => {});
   } catch (e) { fail(e.message); }
@@ -252,9 +273,17 @@ export const Player = {
     el = $('player'); video = $('video'); overlay = $('p-overlay');
     el.querySelectorAll('[data-icon]').forEach((b) => (b.innerHTML = icon(b.dataset.icon)));
 
+    // Pré-carrega os motores de vídeo em segundo plano assim que o app abre
+    // (evita atraso no primeiro clique em um canal)
+    setTimeout(() => { loadLib('mts').catch(() => {}); loadLib('hls').catch(() => {}); }, 400);
+
     video.addEventListener('playing', () => {
       spinner(false); clearTimeout(stallTimer); $('p-error').hidden = true; updatePlayIcon(); showOverlay(2500);
       if (S && !S.started) { S.started = true; save(true); }
+    });
+    video.addEventListener('canplay', () => {
+      spinner(false);
+      if (S && video.paused) video.play().catch(() => {});
     });
     video.addEventListener('waiting', () => spinner(true));
     video.addEventListener('pause', () => { updatePlayIcon(); showOverlay(); save(true); });
