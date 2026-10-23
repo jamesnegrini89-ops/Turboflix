@@ -3,22 +3,23 @@
 // 2. Faz ponte de streaming local (/__stream__?url=...) para vídeos MP4/MKV http://
 //    quando o app roda em https:// (GitHub Pages), evitando que o elemento <video>
 //    do navegador bloqueie IPs http:// ou force upgrade para https://.
-const VERSION = 'turboflix-v1.8.0';
+const VERSION = 'turboflix-v1.8.1';
 const SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
-  './css/style.css?v=1.8.0',
-  './js/app.js?v=1.8.0',
-  './js/storage.js?v=1.8.0',
-  './js/net.js?v=1.8.0',
-  './js/m3u.js?v=1.8.0',
-  './js/xtream.js?v=1.8.0',
-  './js/nav.js?v=1.8.0',
-  './js/player.js?v=1.8.0',
-  './js/icons.js?v=1.8.0',
+  './css/style.css?v=1.8.1',
+  './js/app.js?v=1.8.1',
+  './js/storage.js?v=1.8.1',
+  './js/net.js?v=1.8.1',
+  './js/m3u.js?v=1.8.1',
+  './js/xtream.js?v=1.8.1',
+  './js/nav.js?v=1.8.1',
+  './js/player.js?v=1.8.1',
+  './js/icons.js?v=1.8.1',
   './js/vendor/hls.min.js',
   './js/vendor/mpegts.js',
+  './proxy/cloudflare-worker.js',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png'

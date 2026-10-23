@@ -1,12 +1,12 @@
 // Player de vídeo otimizado para abertura instantânea (low-latency) + Transmissão DLNA / Cast:
 // - MPEG-TS (.ts) com stashBuffer reduzido (64 KB) para começar no primeiro keyframe (~1-2s)
 // - HLS (.m3u8) começando no último segmento ao vivo com buffer inicial mínimo
-// - Ponte de streaming local via Service Worker (/__stream__) para filmes/séries MP4/MKV http://
-//   em páginas https:// (evita que o <video> do Chrome bloqueie IPs http:// ou force upgrade para https://)
+// - Ponte de streaming local via Service Worker (/__stream__) + suporte a Cloudflare Worker v1.8.1 (.sslip.io)
+//   para filmes/séries MP4/MKV http:// em páginas https:// (Desktop e Chrome Android)
 // - Transmissão DLNA (UPnP AVTransport SetAVTransportURI + Play), Cast Nativo / AirPlay e VLC / Web Video Caster
-import { Store } from './storage.js?v=1.8.0';
-import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.8.0';
-import { icon } from './icons.js?v=1.8.0';
+import { Store } from './storage.js?v=1.8.1';
+import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.8.1';
+import { icon } from './icons.js?v=1.8.1';
 
 const $ = (id) => document.getElementById(id);
 let el, video, overlay, castModal, hls = null, mts = null, S = null, hideTimer = null, stallTimer = null, lastSave = 0;
@@ -18,12 +18,32 @@ const cdnCache = new Map();
 const sizeCache = new Map();
 const activeStreamCtrls = new Set();
 let swBridgeReady = false;
+let workerOutdatedDetected = false;
 
 function abortActiveStreams() {
   for (const c of activeStreamCtrls) {
     try { c.abort(); } catch {}
   }
   activeStreamCtrls.clear();
+}
+
+async function bridgeFetch(targetUrl, headers, signal) {
+  if (hasProxy()) {
+    try {
+      const r = await fetch(proxify(targetUrl), { headers, signal });
+      if (r.ok) {
+        if (!r.headers.get('x-worker-version')) workerOutdatedDetected = false;
+        return { res: r, viaProxy: true };
+      }
+      if (r.status === 502 || r.status === 500 || r.status === 403) {
+        workerOutdatedDetected = true;
+      }
+    } catch {
+      workerOutdatedDetected = true;
+    }
+  }
+  const r = await fetch(targetUrl, { headers, signal });
+  return { res: r, viaProxy: false };
 }
 
 function initStreamBridge() {
@@ -93,14 +113,18 @@ function initStreamBridge() {
       const headers = { Range: rangeStr };
       const cached = cdnCache.get(d.url);
       let fetchUrl = (cached && Date.now() - cached.ts < 120000) ? cached.url : d.url;
-      let res = await fetch(fetchUrl, { headers, signal: ctrl.signal });
+      let { res, viaProxy } = await bridgeFetch(fetchUrl, headers, ctrl.signal);
       if (!res.ok && fetchUrl !== d.url) {
         cdnCache.delete(d.url);
         fetchUrl = d.url;
-        res = await fetch(fetchUrl, { headers, signal: ctrl.signal });
+        ({ res, viaProxy } = await bridgeFetch(fetchUrl, headers, ctrl.signal));
       }
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      if (res.redirected && res.url) {
+
+      const xFinal = res.headers.get('x-final-url');
+      if (viaProxy && xFinal && xFinal !== d.url) {
+        cdnCache.set(d.url, { url: xFinal, ts: Date.now() });
+      } else if (!viaProxy && res.redirected && res.url) {
         cdnCache.set(d.url, { url: res.url, ts: Date.now() });
       }
 
@@ -150,7 +174,7 @@ async function ensureSwBridge() {
       swBridgeReady = true;
       return true;
     }
-    const reg = await navigator.serviceWorker.register('sw.js?v=1.8.0', { updateViaCache: 'none' });
+    const reg = await navigator.serviceWorker.register('sw.js?v=1.8.1', { updateViaCache: 'none' });
     await reg.update().catch(() => {});
     await Promise.race([
       navigator.serviceWorker.ready,
@@ -203,14 +227,9 @@ async function prepareCandidates(item) {
   const out = [];
   const live = item.type === 'live';
 
-  // 1) Se tiver proxy próprio configurado (Cloudflare Worker), usa primeiro para links http:// em https://
-  if (hasProxy()) {
-    for (const u of raws) {
-      if (isMixed(u)) kindOf(u, live).forEach((k) => out.push({ url: proxify(u), kind: k, proxied: true }));
-    }
-  }
-
-  // 2) Em páginas https:// (GitHub Pages), vídeos MP4/MKV http:// passam pela ponte local (/__stream__)
+  // 1) Em páginas https:// (GitHub Pages), vídeos MP4/MKV http:// passam pela ponte local (/__stream__)
+  //    que usa automaticamente o Cloudflare Worker (se configurado) com cache de X-Final-Url,
+  //    ou faz fetch direto se Conteúdo Inseguro estiver permitido.
   if (!live && raws.some((u) => isMixed(u))) {
     const canBridge = await ensureSwBridge();
     if (canBridge) {
@@ -223,6 +242,17 @@ async function prepareCandidates(item) {
           });
         }
       }
+    }
+  }
+
+  // 2) Se tiver proxy próprio configurado (Cloudflare Worker), usa para links http:// em https://
+  //    Em canais ao vivo via Cloudflare Worker, prioriza HLS (.m3u8) antes de .ts para máxima estabilidade no celular
+  if (hasProxy()) {
+    const proxyRaws = live
+      ? [...raws].sort((a, b) => (/\.m3u8/i.test(b) ? 1 : 0) - (/\.m3u8/i.test(a) ? 1 : 0))
+      : raws;
+    for (const u of proxyRaws) {
+      if (isMixed(u)) kindOf(u, live).forEach((k) => out.push({ url: proxify(u), kind: k, proxied: true }));
     }
   }
 
@@ -252,21 +282,30 @@ function teardown() {
 
 function spinner(on) { $('p-spinner').hidden = !on; }
 
-function showError(msg, mixedHelp = false) {
+function showError(msg) {
   spinner(false);
   const box = $('p-error');
-  const helpHtml = mixedHelp ? `
-    <div style="margin-top:12px;padding:12px 16px;background:rgba(155,77,255,.18);border:1px solid rgba(199,155,255,.4);border-radius:12px;text-align:left;max-width:560px;font-size:13px;line-height:1.45">
-      <b>Como liberar vídeos HTTP no navegador (leva 10 segundos):</b><br>
-      1. Clique no ícone de <b>cadeado / ajustes</b> ao lado do endereço <code>${esc(location.host)}</code> na barra do navegador.<br>
-      2. Clique em <b>Configurações do site</b> (ou Permissões).<br>
-      3. Em <b>Conteúdo inseguro (Insecure content)</b>, mude para <b>Permitir</b> e recarregue a página.
-    </div>` : `
+  const isHttpsBrowser = location.protocol === 'https:' && !window.AndroidDlna;
+  const workerTip = isHttpsBrowser ? `
+    <div style="margin-top:12px;padding:12px 14px;background:rgba(155,77,255,.16);border:1px solid rgba(199,155,255,.38);border-radius:12px;text-align:left;max-width:560px;font-size:12.5px;line-height:1.45">
+      ${hasProxy() ? `
+        <b>💡 Usando Cloudflare Worker no Chrome do Celular?</b><br>
+        O servidor IPTV redireciona os vídeos para IPs diretos de CDN (que o Worker antigo bloqueava com erro 502).<br>
+        • Clique em <b>Copiar Código do Worker v1.8.1</b> abaixo e cole no seu Worker da Cloudflare (leva 15s), <b>OU</b><br>
+        • No Chrome do Android, toque no ícone ao lado da barra de endereço → <b>Permissões / Configurações do site</b> → <b>Conteúdo inseguro → Permitir</b>.
+      ` : `
+        <b>💡 No navegador Chrome (Celular ou PC):</b><br>
+        Toque no ícone de <b>ajustes/cadeado</b> ao lado do endereço <code>${esc(location.host)}</code> → <b>Configurações do site (Permissões)</b> → mude <b>Conteúdo inseguro</b> para <b>Permitir</b>.
+      `}
+    </div>` : '';
+
+  box.innerHTML = `<div>${icon('tv')}<h3>Não foi possível reproduzir</h3><p>${esc(msg)}</p>
     <div style="margin-top:12px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
       <button class="btn primary focusable" data-p="retry">${icon('refresh')} Tentar novamente</button>
       <button class="btn focusable" data-p="cast">${icon('cast')} Transmitir via DLNA / VLC</button>
-    </div>`;
-  box.innerHTML = `<div>${icon('tv')}<h3>Não foi possível reproduzir</h3><p>${esc(msg)}</p>${helpHtml}
+      ${isHttpsBrowser ? `<button class="btn focusable" data-p="copy-worker">${icon('link')} Copiar Código do Worker v1.8.1</button>` : ''}
+    </div>
+    ${workerTip}
     <p class="dim" style="margin-top:12px">Pressione VOLTAR para sair${S?.item.type === 'live' ? ' ou ▲/▼ para trocar de canal' : ''}.</p></div>`;
   box.hidden = false;
 }
@@ -295,6 +334,15 @@ async function resolveCdnUrlForDlna(rawUrl) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 5000);
   try {
+    if (hasProxy()) {
+      const rp = await fetch(proxify(rawUrl), { headers: { Range: 'bytes=0-0' }, signal: ctrl.signal });
+      const xf = rp.headers.get('x-final-url');
+      ctrl.abort();
+      if (xf) {
+        cdnCache.set(rawUrl, { url: xf, ts: Date.now() });
+        return xf;
+      }
+    }
     const r = await fetch(rawUrl, { headers: { Range: 'bytes=0-0' }, signal: ctrl.signal });
     const finalUrl = (r.redirected && r.url) ? r.url : rawUrl;
     if (r.redirected && r.url) cdnCache.set(rawUrl, { url: r.url, ts: Date.now() });
@@ -365,7 +413,6 @@ function getCandidateDlnaEndpoints(hostInput) {
       `http://${raw}/smp_22_`
     ];
   }
-  // Portas e caminhos padrão de TVs Samsung, LG, Sony, TCL, Philips, Roku, Kodi e BubbleUPnP
   return [
     `http://${ip}:9197/upnp/control/AVTransport1`,
     `http://${ip}:7676/smp_22_`,
@@ -389,7 +436,6 @@ async function transmitDlna(hostInput, streamUrl, title, isLive, setStatus) {
   }
   Store.setSetting('dlnaHost', cleanHost);
 
-  // Libera a conexão local do player para respeitar o limite de 1 tela do servidor IPTV!
   setStatus('⏳ Liberando conexão local e preparando stream direto para a TV...');
   teardown();
   spinner(false);
@@ -398,7 +444,6 @@ async function transmitDlna(hostInput, streamUrl, title, isLive, setStatus) {
   const inp = castModal.querySelector('#cast-url-input');
   if (inp) inp.value = finalUrl;
 
-  // Se estiver rodando no APK Android / Fire TV, usa a ponte nativa Java (sem restrição de CORS/SSDP)
   if (window.AndroidDlna && typeof window.AndroidDlna.castToDevice === 'function') {
     setStatus('📡 Enviando para a Smart TV via DLNA nativo...');
     try {
@@ -414,7 +459,6 @@ async function transmitDlna(hostInput, streamUrl, title, isLive, setStatus) {
   const didl = buildDidlMetadata(title || 'TurboFlix', finalUrl, isLive);
   const setUriBody = `<InstanceID>0</InstanceID><CurrentURI>${esc(finalUrl)}</CurrentURI><CurrentURIMetaData>${esc(didl)}</CurrentURIMetaData>`;
   const playBody = `<InstanceID>0</InstanceID><Speed>1</Speed>`;
-  const stopBody = `<InstanceID>0</InstanceID>`;
 
   const endpoints = getCandidateDlnaEndpoints(cleanHost);
   setStatus(`📡 Conectando via DLNA UPnP em ${cleanHost}...`);
@@ -430,13 +474,11 @@ async function transmitDlna(hostInput, streamUrl, title, isLive, setStatus) {
         return;
       }
     } catch {
-      // Alguns televisores bloqueiam a leitura da resposta via CORS mas aceitam o POST SOAP
       sentCount++;
     }
   }
 
   if (sentCount > 0) {
-    // Dispara Play no endpoint principal ou salvo
     const prefEp = Store.settings.dlnaEndpoint || endpoints[0];
     sendSoapToEndpoint(prefEp, 'Play', playBody).catch(() => {});
     setStatus(`📡 Comando DLNA enviado para ${cleanHost} (conexão local pausada). Se a TV não abrir sozinha, use o botão "Abrir no VLC" ou "Cast do Navegador" abaixo.`);
@@ -526,7 +568,6 @@ async function openCastModal() {
     if (st) st.textContent = msg;
   };
 
-  // Se for filme/série e ainda não temos a URL final do CDN no cache, resolve em background para facilitar o DLNA
   if (!live && !urls.cdn && urls.primary) {
     resolveCdnUrlForDlna(urls.primary).then((resolved) => {
       const inp = castModal.querySelector('#cast-url-input');
@@ -534,7 +575,6 @@ async function openCastModal() {
     }).catch(() => {});
   }
 
-  // Se estiver no APK Android, já faz uma busca automática por TVs DLNA na rede
   if (hasNativeBridge) {
     scanAndroidDlnaDevices(setStatus);
   }
@@ -709,7 +749,8 @@ function seek(delta) {
 }
 
 function togglePlay() {
-  if (video.paused) video.play().catch(() => {}); else video.pause();
+  if (video.paused || video.readyState < 2) video.play().catch(() => {});
+  else video.pause();
   showOverlay();
 }
 
@@ -740,7 +781,7 @@ function playNextEpisode(step = 1) {
 async function start(item, opts = {}) {
   closeCastModal();
   const startToken = Math.random();
-  S = { item, list: opts.list || [], start: opts.start || 0, cands: [], ci: 0, started: false, startToken };
+  S = { item, list: opts.list || [], start: opts.start || 0, cands: [], ci: 0, started: false, startToken, openedAt: Date.now() };
   const live = item.type === 'live';
   $('p-title').textContent = item.name;
   $('p-sub').textContent = item.seriesName ? item.seriesName : (item.group || '');
@@ -784,6 +825,10 @@ export const Player = {
       spinner(false); clearTimeout(stallTimer); $('p-error').hidden = true; updatePlayIcon(); showOverlay(2500);
       if (S && !S.started) { S.started = true; save(true); }
     });
+    video.addEventListener('loadeddata', () => {
+      spinner(false); clearTimeout(stallTimer);
+      if (S && video.paused) video.play().catch(() => {});
+    });
     video.addEventListener('canplay', () => {
       spinner(false); clearTimeout(stallTimer);
       if (S && video.paused) video.play().catch(() => {});
@@ -801,9 +846,11 @@ export const Player = {
       if (S && S.start > 0 && isFinite(video.duration) && S.start < video.duration - 5) {
         video.currentTime = S.start; S.start = 0;
       }
+      if (S && video.paused) video.play().catch(() => {});
     });
     video.addEventListener('timeupdate', () => {
       if (!S) return;
+      if (!video.paused && !video.seeking && video.readyState >= 2) spinner(false);
       const d = video.duration;
       if (isFinite(d) && d > 0) {
         $('p-fill').style.width = (video.currentTime / d) * 100 + '%';
@@ -914,7 +961,7 @@ export const Player = {
     // Toque/mouse
     el.addEventListener('mousemove', () => showOverlay());
     video.addEventListener('click', () => (overlay.classList.contains('show') ? togglePlay() : showOverlay()));
-    el.addEventListener('click', (e) => {
+    el.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-p]');
       if (!b) return;
       e.stopPropagation();
@@ -926,6 +973,16 @@ export const Player = {
       else if (a === 'ff') seek(10);
       else if (a === 'fav') { Store.toggleFav(S.item); updateFavIcon(); showOverlay(); }
       else if (a === 'cast') { openCastModal(); }
+      else if (a === 'copy-worker') {
+        try {
+          const r = await fetch('proxy/cloudflare-worker.js?v=1.8.1', { cache: 'no-store' });
+          const code = await r.text();
+          await navigator.clipboard.writeText(code);
+          b.textContent = '✔ Código Copiado! Cole no seu Worker da Cloudflare';
+        } catch {
+          window.open('proxy/cloudflare-worker.js', '_blank');
+        }
+      }
       else if (a === 'next') S.item.type === 'live' ? zap(1) : playNextEpisode(1);
       else if (a === 'prev') S.item.type === 'live' ? zap(-1) : playNextEpisode(-1);
       else if (a === 'fs') Player.fullscreen(true);
@@ -952,7 +1009,9 @@ export const Player = {
       const live = S.item.type === 'live';
       let handled = true;
       if (k === 'Escape' || k === 'GoBack' || k === 'BrowserBack' || k === 'Backspace' || c === 4) history.back();
-      else if (k === 'Enter' || k === ' ' || k === 'MediaPlayPause' || c === 179 || c === 85 || c === 23) togglePlay();
+      else if (k === 'Enter' || k === ' ' || k === 'MediaPlayPause' || c === 179 || c === 85 || c === 23) {
+        if (!e.repeat && Date.now() - (S.openedAt || 0) > 600) togglePlay();
+      }
       else if (k === 'MediaPlay' || c === 126) { video.play().catch(() => {}); showOverlay(); }
       else if (k === 'MediaPause' || c === 127) { video.pause(); }
       else if (k === 'ArrowLeft' || c === 37) live ? showOverlay() : seek(-10);
@@ -976,7 +1035,6 @@ export const Player = {
   open(item, opts = {}) {
     el.hidden = false;
     document.body.classList.add('playing');
-    if (matchMedia('(pointer: coarse)').matches) Player.fullscreen(false);
     start(item, opts);
   },
 
@@ -994,6 +1052,7 @@ export const Player = {
   },
 
   fullscreen(toggle) {
+    if (window.AndroidDlna) return;
     try {
       if (document.fullscreenElement) { if (toggle) document.exitFullscreen(); return; }
       const r = (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)?.call(document.documentElement);

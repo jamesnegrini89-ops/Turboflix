@@ -1,12 +1,24 @@
 // Rede: requisições diretas, espelho real do servidor (server_info.url),
 // resolução DNS-over-HTTPS automática (contra bloqueio de DNS da operadora)
-// e suporte opcional a Proxy HTTPS (Cloudflare Worker).
-import { Store } from './storage.js?v=1.8.0';
+// e suporte opcional a Proxy HTTPS (Cloudflare Worker com conversão automática de IP bruto para .sslip.io).
+import { Store } from './storage.js?v=1.8.1';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /** A página está em https e o link é http? */
 export const isMixed = (url) => location.protocol === 'https:' && /^http:\/\//i.test(url || '');
+
+/** Converte IP bruto A.B.C.D em domínio A-B-C-D.sslip.io (necessário para Cloudflare Workers, que bloqueia fetch direto em IP bruto). */
+export function ipToSslip(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(u.hostname)) {
+      u.hostname = u.hostname.replace(/\./g, '-') + '.sslip.io';
+      return u.toString();
+    }
+  } catch {}
+  return urlStr;
+}
 
 /** Normaliza a URL do proxy customizado (ignora IP:porta sem http ou proxies SOCKS :1080). */
 export function cleanProxy(raw) {
@@ -20,12 +32,13 @@ export function cleanProxy(raw) {
 
 export function hasProxy() { return !!cleanProxy(); }
 
-/** Monta a URL passando pelo proxy customizado configurado. */
+/** Monta a URL passando pelo proxy customizado configurado (convertendo IPs brutos para .sslip.io). */
 export function proxify(url, customBase) {
   const p = customBase || cleanProxy();
   if (!p) return url;
-  if (p.includes('{url}')) return p.replace('{url}', encodeURIComponent(url));
-  return p.replace(/\/+$/, '') + '/?url=' + encodeURIComponent(url);
+  const safeTarget = ipToSslip(url);
+  if (p.includes('{url}')) return p.replace('{url}', encodeURIComponent(safeTarget));
+  return p.replace(/\/+$/, '') + '/?url=' + encodeURIComponent(safeTarget);
 }
 
 // Cache de hostnames resolvidos via DNS-over-HTTPS (Google / Cloudflare) e espelhos do servidor
@@ -38,7 +51,7 @@ export function registerHostMirror(originalHost, mirrorHost) {
 }
 
 export async function resolveHostIp(hostname) {
-  if (!hostname || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname === 'localhost') return null;
+  if (!hostname || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.endsWith('.sslip.io') || hostname === 'localhost') return null;
   const key = hostname.toLowerCase();
   if (DNS_CACHE.has(key)) return DNS_CACHE.get(key);
   const endpoints = [
@@ -72,6 +85,10 @@ export function withIpFallback(url) {
       const ui = new URL(url);
       ui.hostname = ip;
       out.push(ui.toString());
+      // Versão .sslip.io do IP (resolve igual ao IP, sem bloqueio de DNS da operadora e compatível com Cloudflare Workers)
+      const us = new URL(url);
+      us.hostname = ip.replace(/\./g, '-') + '.sslip.io';
+      out.push(us.toString());
     }
     if (mirror) {
       const um = new URL(url);
@@ -92,21 +109,27 @@ export async function buildFetchCandidates(url) {
   try {
     const u = new URL(url);
     const h = u.hostname.toLowerCase();
-    // Se já sabemos que um espelho/IP funcionou antes, prioriza
+    const ip = await resolveHostIp(h);
     const mirror = HOST_MIRRORS.get(h);
     if (mirror) {
       const um = new URL(url);
       um.hostname = mirror;
+      if (location.protocol === 'https:' && um.protocol === 'http:') {
+        const umHttps = new URL(um.toString());
+        umHttps.protocol = 'https:';
+        umHttps.port = '';
+        list.unshift(umHttps.toString());
+      }
+      if (custom) list.unshift(proxify(um.toString(), custom));
       list.push(um.toString());
     }
-    list.push(url);
-    const ip = await resolveHostIp(h);
     if (ip && ip !== h) {
       const byIp = new URL(url);
       byIp.hostname = ip;
-      list.push(byIp.toString());
       if (custom) list.unshift(proxify(byIp.toString(), custom));
+      list.push(byIp.toString());
     }
+    list.push(url);
   } catch {
     list.push(url);
   }
