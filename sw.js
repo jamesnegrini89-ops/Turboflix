@@ -1,5 +1,9 @@
-// Service Worker do TurboFlix: guarda apenas os arquivos do app (não guarda vídeos nem listas).
-const VERSION = 'turboflix-v1.6.0';
+// Service Worker do TurboFlix:
+// 1. Guarda em cache apenas os arquivos estáticos do próprio app.
+// 2. Faz ponte de streaming local (/__stream__?url=...) para vídeos MP4/MKV http://
+//    quando o app roda em https:// (GitHub Pages), evitando que o elemento <video>
+//    do navegador bloqueie IPs http:// ou force upgrade para https://.
+const VERSION = 'turboflix-v1.7.0';
 const SHELL = [
   './',
   './index.html',
@@ -32,12 +36,94 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+async function handleStream(e, url) {
+  if (url.searchParams.get('ping') === '1') {
+    return new Response('ok', { status: 200, headers: { 'Cache-Control': 'no-store' } });
+  }
+  const targetUrl = url.searchParams.get('url');
+  if (!targetUrl) return new Response('Missing url', { status: 400 });
+  const range = e.request.headers.get('range') || 'bytes=0-';
+
+  let client = e.clientId ? await self.clients.get(e.clientId) : null;
+  if (!client) {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    client = all[0];
+  }
+  if (!client) return new Response('No client window', { status: 502 });
+
+  const ch = new MessageChannel();
+  const port = ch.port1;
+
+  return await new Promise((resolve) => {
+    let ctrlRef = null;
+    let settled = false;
+    const abortAll = () => {
+      try { port.postMessage({ cmd: 'abort' }); } catch {}
+      try { port.close(); } catch {}
+    };
+    if (e.request.signal) {
+      if (e.request.signal.aborted) {
+        abortAll();
+        return resolve(new Response('Aborted', { status: 499 }));
+      }
+      e.request.signal.addEventListener('abort', abortAll, { once: true });
+    }
+    const stream = new ReadableStream({
+      start(c) { ctrlRef = c; },
+      pull() {
+        try { port.postMessage({ cmd: 'pull' }); } catch {}
+      },
+      cancel() { abortAll(); }
+    }, { highWaterMark: 16 });
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        abortAll();
+        resolve(new Response('Gateway Timeout', { status: 504 }));
+      }
+    }, 25000);
+
+    port.onmessage = (ev) => {
+      const d = ev.data;
+      if (!d) return;
+      if (d.t === 'head') {
+        clearTimeout(timer);
+        settled = true;
+        resolve(new Response(stream, {
+          status: d.status || 206,
+          headers: new Headers(d.headers || {})
+        }));
+      } else if (d.t === 'chunk') {
+        try { ctrlRef.enqueue(new Uint8Array(d.buf)); } catch {}
+      } else if (d.t === 'end') {
+        try { ctrlRef.close(); } catch {}
+        try { port.close(); } catch {}
+      } else if (d.t === 'err') {
+        clearTimeout(timer);
+        if (!settled) {
+          settled = true;
+          resolve(new Response(d.msg || 'Upstream error', { status: 502 }));
+        } else {
+          try { ctrlRef.error(new Error(d.msg || 'Stream error')); } catch {}
+        }
+        try { port.close(); } catch {}
+      }
+    };
+
+    client.postMessage({ __tfStream: true, url: targetUrl, range }, [ch.port2]);
+  });
+}
+
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  // Só intercepta arquivos do próprio app (mesma origem). Streams/listas IPTV passam direto.
   if (url.origin !== self.location.origin) return;
+  if (url.pathname.endsWith('/__stream__')) {
+    e.respondWith(handleStream(e, url));
+    return;
+  }
   e.respondWith(
     fetch(req)
       .then((res) => {

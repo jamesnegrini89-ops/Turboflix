@@ -916,7 +916,9 @@ function boot() {
   });
   Player.init({ resolve: resolveUrls });
   startClock();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+  }
   if (!location.hash) location.replace(Store.cfg ? '#/home' : '#/login');
   route();
 }

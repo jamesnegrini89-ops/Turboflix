@@ -1,7 +1,8 @@
 // Player de vídeo otimizado para abertura instantânea (low-latency):
 // - MPEG-TS (.ts) com stashBuffer reduzido (64 KB) para começar no primeiro keyframe (~1-2s)
 // - HLS (.m3u8) começando no último segmento ao vivo com buffer inicial mínimo
-// - Pré-resolução de DNS (DoH) antes de tocar filmes/séries MP4/MKV
+// - Ponte de streaming local via Service Worker (/__stream__) para filmes/séries MP4/MKV http://
+//   em páginas https:// (evita que o <video> do Chrome bloqueie IPs http:// ou force upgrade para https://)
 import { Store } from './storage.js';
 import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js';
 import { icon } from './icons.js';
@@ -10,6 +11,160 @@ const $ = (id) => document.getElementById(id);
 let el, video, overlay, hls = null, mts = null, S = null, hideTimer = null, stallTimer = null, lastSave = 0;
 let resolveUrls = (item) => (item.url ? [item.url] : []);
 let onChange = () => {};
+
+// Cache de CDN (token /vauth/ resolvido no 302) e tamanho total do arquivo MP4/MKV para Range requests
+const cdnCache = new Map();
+const sizeCache = new Map();
+const activeStreamCtrls = new Set();
+let swBridgeReady = false;
+
+function abortActiveStreams() {
+  for (const c of activeStreamCtrls) {
+    try { c.abort(); } catch {}
+  }
+  activeStreamCtrls.clear();
+}
+
+function initStreamBridge() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.addEventListener('message', async (ev) => {
+    const d = ev.data;
+    if (!d || !d.__tfStream) return;
+    const port = ev.ports[0];
+    if (!port) return;
+
+    const ctrl = new AbortController();
+    activeStreamCtrls.add(ctrl);
+    let reader = null;
+    let reading = false;
+    let pullWanted = 0;
+    let aborted = false;
+
+    const cleanup = () => {
+      aborted = true;
+      activeStreamCtrls.delete(ctrl);
+      try { ctrl.abort(); } catch {}
+      try { reader?.cancel(); } catch {}
+      try { port.close(); } catch {}
+    };
+
+    const pump = async () => {
+      if (reading || !reader || aborted) return;
+      reading = true;
+      try {
+        while (pullWanted > 0 && !aborted) {
+          pullWanted--;
+          const { done, value } = await reader.read();
+          if (aborted) break;
+          if (done) {
+            try { port.postMessage({ t: 'end' }); } catch {}
+            cleanup();
+            return;
+          }
+          if (value && value.byteLength) {
+            port.postMessage({ t: 'chunk', buf: value.buffer }, [value.buffer]);
+          } else {
+            pullWanted++;
+          }
+        }
+      } catch (e) {
+        if (!aborted) {
+          try { port.postMessage({ t: 'err', msg: e.message || 'Read error' }); } catch {}
+          cleanup();
+        }
+      } finally {
+        reading = false;
+      }
+    };
+
+    port.onmessage = (m) => {
+      const cmd = m.data?.cmd;
+      if (cmd === 'abort') {
+        cleanup();
+      } else if (cmd === 'pull') {
+        pullWanted++;
+        pump();
+      }
+    };
+
+    try {
+      const rangeStr = d.range || 'bytes=0-';
+      const headers = { Range: rangeStr };
+      const cached = cdnCache.get(d.url);
+      let fetchUrl = (cached && Date.now() - cached.ts < 120000) ? cached.url : d.url;
+      let res = await fetch(fetchUrl, { headers, signal: ctrl.signal });
+      if (!res.ok && fetchUrl !== d.url) {
+        cdnCache.delete(d.url);
+        fetchUrl = d.url;
+        res = await fetch(fetchUrl, { headers, signal: ctrl.signal });
+      }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      if (res.redirected && res.url) {
+        cdnCache.set(d.url, { url: res.url, ts: Date.now() });
+      }
+
+      const cl = Number(res.headers.get('content-length') || 0);
+      const rm = /bytes=(\d+)-(\d*)/i.exec(rangeStr);
+      const start = rm ? Number(rm[1]) : 0;
+      const isOpenRange = !rm || !rm[2];
+      const end = !isOpenRange ? Number(rm[2]) : (cl > 0 ? start + cl - 1 : 0);
+      if (isOpenRange && cl > 0) sizeCache.set(d.url, start + cl);
+      const total = sizeCache.get(d.url) || (cl > 0 ? start + cl : end + 1);
+
+      const outHeaders = {
+        'Content-Type': res.headers.get('content-type') || 'video/mp4',
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-store'
+      };
+      if (cl > 0) outHeaders['Content-Length'] = String(cl);
+      const exposedCr = res.headers.get('content-range');
+      if (exposedCr) {
+        outHeaders['Content-Range'] = exposedCr;
+      } else if (res.status === 206 && total > 0) {
+        outHeaders['Content-Range'] = `bytes ${start}-${end}/${total}`;
+      }
+
+      reader = res.body.getReader();
+      port.postMessage({ t: 'head', status: res.status, headers: outHeaders });
+      pullWanted += 4;
+      pump();
+    } catch (e) {
+      if (!aborted) {
+        try { port.postMessage({ t: 'err', msg: e.message || 'Fetch error' }); } catch {}
+        cleanup();
+      }
+    }
+  });
+}
+
+async function ensureSwBridge() {
+  if (location.protocol !== 'https:' || !('serviceWorker' in navigator)) return false;
+  if (swBridgeReady && navigator.serviceWorker.controller) return true;
+  try {
+    const ping = async () => {
+      const r = await fetch('./__stream__?ping=1', { cache: 'no-store' });
+      return r.ok && (await r.text()) === 'ok';
+    };
+    if (navigator.serviceWorker.controller && await ping()) {
+      swBridgeReady = true;
+      return true;
+    }
+    const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+    await reg.update().catch(() => {});
+    await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((r) => setTimeout(r, 2000))
+    ]);
+    for (let i = 0; i < 6; i++) {
+      if (await ping().catch(() => false)) {
+        swBridgeReady = true;
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  } catch {}
+  return false;
+}
 
 const libs = {};
 function loadLib(name) {
@@ -56,12 +211,29 @@ async function prepareCandidates(item) {
     }
   }
 
-  // 2) Tenta conexão direta (com IP/espelho prioritário se o domínio estiver bloqueado na operadora)
+  // 2) Em páginas https:// (GitHub Pages), vídeos MP4/MKV http:// precisam passar pela ponte local (/__stream__)
+  //    para que o elemento <video> do Chrome não bloqueie IPs http:// nem force upgrade para https://.
+  if (!live && raws.some((u) => isMixed(u))) {
+    const canBridge = await ensureSwBridge();
+    if (canBridge) {
+      for (const u of raws) {
+        if (isMixed(u)) {
+          kindOf(u, live).forEach((k) => {
+            if (k === 'native') {
+              out.push({ url: './__stream__?url=' + encodeURIComponent(u), kind: 'native', bridged: true, rawUrl: u });
+            }
+          });
+        }
+      }
+    }
+  }
+
+  // 3) Tenta conexão direta (com IP/espelho prioritário se o domínio estiver bloqueado na operadora)
   for (const u of raws) {
     kindOf(u, live).forEach((k) => out.push({ url: u, kind: k, mixed: isMixed(u) }));
   }
 
-  // 3) Se tiver proxy próprio configurado, tenta também para links não-mistos como fallback CORS
+  // 4) Se tiver proxy próprio configurado, tenta também para links não-mistos como fallback CORS
   if (hasProxy()) {
     for (const u of raws) {
       if (!isMixed(u)) kindOf(u, live).forEach((k) => out.push({ url: proxify(u), kind: k, proxied: true }));
@@ -74,6 +246,7 @@ async function prepareCandidates(item) {
 
 function teardown() {
   clearTimeout(stallTimer);
+  abortActiveStreams();
   if (hls) { try { hls.destroy(); } catch {} hls = null; }
   if (mts) { try { mts.pause(); mts.unload(); mts.detachMediaElement(); mts.destroy(); } catch {} mts = null; }
   try { video.pause(); video.removeAttribute('src'); video.load(); } catch {}
@@ -99,6 +272,13 @@ function showError(msg, mixedHelp = false) {
   box.hidden = false;
 }
 
+function armStallTimer(token, ms) {
+  clearTimeout(stallTimer);
+  stallTimer = setTimeout(() => {
+    if (S && S.token === token && video.readyState < 1) fail('timeout');
+  }, ms);
+}
+
 function fail(reason) {
   if (!S) return;
   console.warn('Tentativa falhou no player:', reason, S.cands[S.ci]);
@@ -108,7 +288,7 @@ function fail(reason) {
     setTimeout(() => { if (S) playCandidate(); }, 350);
     return;
   }
-  showError('O canal ou vídeo pode estar fora do ar, interceptado por gerenciador de downloads (IDM) ou com limite de 1 tela em uso.');
+  showError('O canal ou vídeo pode estar fora do ar ou com limite de 1 tela em uso.');
 }
 
 async function playCandidate() {
@@ -119,10 +299,10 @@ async function playCandidate() {
   spinner(true);
   S.recovered = false;
   const token = (S.token = Math.random());
+  S.candStart = Date.now();
   const live = S.item.type === 'live';
-  // Timeout para tentar próxima rota caso o servidor demore (filmes MP4 de 2.5GB podem levar ~10-15s no redirect)
-  const waitMs = live ? (S.ci === 0 ? 9000 : 14000) : 22000;
-  stallTimer = setTimeout(() => { if (S && S.token === token && video.readyState < 1) fail('timeout'); }, waitMs);
+  const waitMs = live ? (S.ci === 0 ? 9000 : 14000) : 25000;
+  armStallTimer(token, waitMs);
 
   try {
     if (c.kind === 'ts') {
@@ -288,22 +468,35 @@ export const Player = {
     el = $('player'); video = $('video'); overlay = $('p-overlay');
     el.querySelectorAll('[data-icon]').forEach((b) => (b.innerHTML = icon(b.dataset.icon)));
 
-    // Pré-carrega os motores de vídeo em segundo plano assim que o app abre
-    // (evita atraso no primeiro clique em um canal)
-    setTimeout(() => { loadLib('mts').catch(() => {}); loadLib('hls').catch(() => {}); }, 400);
+    initStreamBridge();
+
+    // Pré-carrega os motores de vídeo e a ponte SW em segundo plano assim que o app abre
+    setTimeout(() => {
+      loadLib('mts').catch(() => {});
+      loadLib('hls').catch(() => {});
+      ensureSwBridge().catch(() => {});
+    }, 400);
 
     video.addEventListener('playing', () => {
       spinner(false); clearTimeout(stallTimer); $('p-error').hidden = true; updatePlayIcon(); showOverlay(2500);
       if (S && !S.started) { S.started = true; save(true); }
     });
     video.addEventListener('canplay', () => {
-      spinner(false);
+      spinner(false); clearTimeout(stallTimer);
       if (S && video.paused) video.play().catch(() => {});
+    });
+    video.addEventListener('progress', () => {
+      // Enquanto o vídeo estiver baixando dados ativamente (ex.: átomo moov de filme MP4 grande),
+      // renova o timer de espera até o limite máximo de 60s por rota.
+      if (S && S.item.type !== 'live' && video.readyState < 1 && Date.now() - (S.candStart || 0) < 60000) {
+        armStallTimer(S.token, 15000);
+      }
     });
     video.addEventListener('waiting', () => spinner(true));
     video.addEventListener('pause', () => { updatePlayIcon(); showOverlay(); save(true); });
     video.addEventListener('play', updatePlayIcon);
     video.addEventListener('loadedmetadata', () => {
+      clearTimeout(stallTimer);
       if (S && S.start > 0 && isFinite(video.duration) && S.start < video.duration - 5) {
         video.currentTime = S.start; S.start = 0;
       }
@@ -404,7 +597,7 @@ export const Player = {
       if (document.fullscreenElement) { if (toggle) document.exitFullscreen(); return; }
       const r = (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)?.call(document.documentElement);
       Promise.resolve(r).then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
-      if (!document.documentElement.requestFullscreen && video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+      if (!document.requestFullscreen && video.webkitEnterFullscreen) video.webkitEnterFullscreen();
     } catch {}
   }
 };
