@@ -12,13 +12,13 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/style.css?v=1.8.1" />
+  <link rel="stylesheet" href="css/style.css?v=1.8.4" />
   <script>
     // Limpa caches de versões anteriores do Service Worker para garantir carregamento imediato da versão atual
     try {
       if ('caches' in window) {
         caches.keys().then(function(ks) {
-          ks.forEach(function(k) { if (k !== 'turboflix-v1.8.1') caches.delete(k); });
+          ks.forEach(function(k) { if (k !== 'turboflix-v1.8.4') caches.delete(k); });
         });
       }
     } catch (e) {}
@@ -82,6 +82,6 @@
   <div id="loading" hidden><div class="spinner"></div><div id="loading-msg">Carregando...</div></div>
   <div id="toast" hidden></div>
 
-  <script type="module" src="js/app.js?v=1.8.1"></script>
+  <script type="module" src="js/app.js?v=1.8.4"></script>
 </body>
 </html>

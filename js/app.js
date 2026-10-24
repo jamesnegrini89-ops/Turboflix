@@ -1,13 +1,13 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
-import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.1';
-import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.1';
-import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.1';
-import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.1';
-import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.1';
-import { Player } from './player.js?v=1.8.1';
-import { icon, hydrateIcons } from './icons.js?v=1.8.1';
+import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.4';
+import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.4';
+import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.4';
+import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.4';
+import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.4';
+import { Player } from './player.js?v=1.8.4';
+import { icon, hydrateIcons } from './icons.js?v=1.8.4';
 
-const APP_VERSION = '1.8.1';
+const APP_VERSION = '1.8.4';
 const $ = (s, r = document) => r.querySelector(s);
 const view = $('#view');
 
@@ -379,6 +379,8 @@ function fillGrid(key, group) {
   $('#bh').textContent = group === '*' ? 'Todos' : group === '@fav' ? 'Minha Lista' : group;
   $('#bc').textContent = `${fmtN(list.length)} itens`;
   const grid = $('#grid');
+  const bm = view.querySelector('.browse-main');
+  if (bm) bm.scrollTop = 0;
   const liveMostly = list.filter((i) => i.type === 'live').length > list.length / 2;
   grid.className = 'grid ' + (liveMostly ? 'grid-live' : '');
   grid.innerHTML = '';
@@ -392,7 +394,9 @@ function fillGrid(key, group) {
     const chunk = list.slice(shown, shown + n);
     shown += chunk.length;
     grid.insertAdjacentHTML('beforeend', chunk.map((i) => card(i, { list: 'browse' })).join(''));
+    hydrateIcons(grid);
   };
+  grid._loadMore = more;
   more();
   if (!list.length) grid.innerHTML = `<p class="dim pad">Nenhum item neste grupo.</p>`;
   gridObserver?.disconnect();
@@ -615,12 +619,12 @@ function renderSettings() {
 
       <div class="panel">
         <h3>${icon('link')} Proxy HTTPS — Cloudflare Worker (opcional)</h3>
-        <p class="dim">Para reproduzir canais, filmes e séries no Chrome do celular via Cloudflare Worker, certifique-se de usar o código atualizado <b>v1.8.1</b> (que converte os IPs dos CDNs IPTV para <code>.sslip.io</code>).</p>
+        <p class="dim">Para reproduzir canais, filmes e séries no Chrome do celular via Cloudflare Worker, certifique-se de usar o código atualizado <b>v1.8.4</b> (que converte os IPs dos CDNs IPTV para <code>.sslip.io</code>).</p>
         <input id="proxy" class="field focusable" type="url" placeholder="https://seu-proxy.workers.dev" value="${esc(s.proxy)}">
         <div class="actions">
           <button class="btn primary focusable" data-act="saveproxy">Salvar proxy</button>
           <button class="btn focusable" data-act="testproxy">Testar</button>
-          <button class="btn focusable" data-act="copyworker">${icon('link')} Copiar código do Worker v1.8.1</button>
+          <button class="btn focusable" data-act="copyworker">${icon('link')} Copiar código do Worker v1.8.4</button>
         </div>
       </div>
 
@@ -826,20 +830,20 @@ async function handleAction(el) {
         const r = await fetch(p.replace(/\/+$/, '') + '/');
         const txt = await r.text().catch(() => '');
         if (!r.ok) { toast('Proxy respondeu com erro ' + r.status); break; }
-        if (txt.includes('1.8.1') || r.headers.get('x-worker-version') === '1.8.1') {
-          toast('✔ Worker v1.8.1 atualizado e funcionando!');
+        if (txt.includes('1.8.4') || r.headers.get('x-worker-version') === '1.8.4') {
+          toast('✔ Worker v1.8.4 atualizado e funcionando!');
         } else {
-          toast('⚠️ Worker online, mas desatualizado! Clique em "Copiar código do Worker v1.8.1" e atualize na Cloudflare.');
+          toast('⚠️ Worker online, mas desatualizado! Clique em "Copiar código do Worker v1.8.4" e atualize na Cloudflare.');
         }
       } catch { toast('Não foi possível acessar o proxy'); }
       break;
     }
     case 'copyworker': {
       try {
-        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.1', { cache: 'no-store' });
+        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.4', { cache: 'no-store' });
         const code = await r.text();
         await navigator.clipboard.writeText(code);
-        toast('✔ Código do Worker v1.8.1 copiado! Cole no seu Worker da Cloudflare e clique em Deploy.');
+        toast('✔ Código do Worker v1.8.4 copiado! Cole no seu Worker da Cloudflare e clique em Deploy.');
       } catch {
         window.open('proxy/cloudflare-worker.js', '_blank');
       }
@@ -946,7 +950,7 @@ function boot() {
   Player.init({ resolve: resolveUrls });
   startClock();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js?v=1.8.1', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=1.8.4', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
   if (!location.hash) location.replace(Store.cfg ? '#/home' : '#/login');
   route();

@@ -1,12 +1,12 @@
 // Player de vídeo otimizado para abertura instantânea (low-latency) + Transmissão DLNA / Cast:
 // - MPEG-TS (.ts) com stashBuffer reduzido (64 KB) para começar no primeiro keyframe (~1-2s)
 // - HLS (.m3u8) começando no último segmento ao vivo com buffer inicial mínimo
-// - Ponte de streaming local via Service Worker (/__stream__) + suporte a Cloudflare Worker v1.8.1 (.sslip.io)
+// - Ponte de streaming local via Service Worker (/__stream__) + suporte a Cloudflare Worker v1.8.4 (.sslip.io)
 //   para filmes/séries MP4/MKV http:// em páginas https:// (Desktop e Chrome Android)
 // - Transmissão DLNA (UPnP AVTransport SetAVTransportURI + Play), Cast Nativo / AirPlay e VLC / Web Video Caster
-import { Store } from './storage.js?v=1.8.1';
-import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.8.1';
-import { icon } from './icons.js?v=1.8.1';
+import { Store } from './storage.js?v=1.8.4';
+import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.8.4';
+import { icon } from './icons.js?v=1.8.4';
 
 const $ = (id) => document.getElementById(id);
 let el, video, overlay, castModal, hls = null, mts = null, S = null, hideTimer = null, stallTimer = null, lastSave = 0;
@@ -174,7 +174,7 @@ async function ensureSwBridge() {
       swBridgeReady = true;
       return true;
     }
-    const reg = await navigator.serviceWorker.register('sw.js?v=1.8.1', { updateViaCache: 'none' });
+    const reg = await navigator.serviceWorker.register('sw.js?v=1.8.4', { updateViaCache: 'none' });
     await reg.update().catch(() => {});
     await Promise.race([
       navigator.serviceWorker.ready,
@@ -291,7 +291,7 @@ function showError(msg) {
       ${hasProxy() ? `
         <b>💡 Usando Cloudflare Worker no Chrome do Celular?</b><br>
         O servidor IPTV redireciona os vídeos para IPs diretos de CDN (que o Worker antigo bloqueava com erro 502).<br>
-        • Clique em <b>Copiar Código do Worker v1.8.1</b> abaixo e cole no seu Worker da Cloudflare (leva 15s), <b>OU</b><br>
+        • Clique em <b>Copiar Código do Worker v1.8.4</b> abaixo e cole no seu Worker da Cloudflare (leva 15s), <b>OU</b><br>
         • No Chrome do Android, toque no ícone ao lado da barra de endereço → <b>Permissões / Configurações do site</b> → <b>Conteúdo inseguro → Permitir</b>.
       ` : `
         <b>💡 No navegador Chrome (Celular ou PC):</b><br>
@@ -303,7 +303,7 @@ function showError(msg) {
     <div style="margin-top:12px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
       <button class="btn primary focusable" data-p="retry">${icon('refresh')} Tentar novamente</button>
       <button class="btn focusable" data-p="cast">${icon('cast')} Transmitir via DLNA / VLC</button>
-      ${isHttpsBrowser ? `<button class="btn focusable" data-p="copy-worker">${icon('link')} Copiar Código do Worker v1.8.1</button>` : ''}
+      ${isHttpsBrowser ? `<button class="btn focusable" data-p="copy-worker">${icon('link')} Copiar Código do Worker v1.8.4</button>` : ''}
     </div>
     ${workerTip}
     <p class="dim" style="margin-top:12px">Pressione VOLTAR para sair${S?.item.type === 'live' ? ' ou ▲/▼ para trocar de canal' : ''}.</p></div>`;
@@ -623,8 +623,25 @@ function armStallTimer(token, ms) {
   }, ms);
 }
 
+// Reconexão automática e silenciosa de canais ao vivo: quando o servidor IPTV fecha a conexão
+// (o vídeo "termina" depois de alguns segundos, ex.: 0:13 / 0:13) ou o stream trava, reabre o mesmo link
+// sem mostrar erro e sem o usuário precisar sair e entrar no canal de novo.
+function liveReconnect(reason) {
+  if (!S || S.item.type !== 'live' || !S.playingOk) return false;
+  const now = Date.now();
+  if (!S.rcStart || now - S.rcStart > 90000) { S.rcStart = now; S.rcCount = 0; }
+  S.rcCount++;
+  if (S.rcCount > 8) return false;
+  console.warn('Reconectando canal ao vivo:', reason);
+  spinner(true);
+  const token = S.token;
+  setTimeout(() => { if (S && S.token === token) playCandidate(); }, 250);
+  return true;
+}
+
 function fail(reason) {
   if (!S) return;
+  if (liveReconnect(reason)) return;
   console.warn('Tentativa falhou no player:', reason, S.cands[S.ci]);
   if (S.ci + 1 < S.cands.length) {
     S.ci++;
@@ -641,6 +658,9 @@ async function playCandidate() {
   $('p-error').hidden = true;
   spinner(true);
   S.recovered = false;
+  S.playingOk = false;
+  S.lastT = -1;
+  S.lastProg = Date.now();
   const token = (S.token = Math.random());
   S.candStart = Date.now();
   const live = S.item.type === 'live';
@@ -657,16 +677,21 @@ async function playCandidate() {
           {
             enableWorker: true,
             enableStashBuffer: true,
-            stashInitialSize: 65536,
+            stashInitialSize: 128 * 1024,
             lazyLoad: false,
+            // Margem de buffer maior: antes pulava para 0,8s do fim do buffer e travava (spinner) a cada oscilação da rede
             liveBufferLatencyChasing: live,
-            liveBufferLatencyMaxLatency: 3.5,
-            liveBufferLatencyMinRemain: 0.8,
-            autoCleanupSourceBuffer: true
+            liveBufferLatencyMaxLatency: 12,
+            liveBufferLatencyMinRemain: 4,
+            autoCleanupSourceBuffer: true,
+            autoCleanupMaxBackwardDuration: 30,
+            autoCleanupMinBackwardDuration: 15
           }
         );
         mts.attachMediaElement(video);
         mts.on(mpegts.Events.ERROR, (t, d) => fail('ts:' + t + ' ' + d));
+        // Servidor fechou a conexão do .ts (Connection: close) -> reconecta em vez de "terminar" o canal
+        mts.on(mpegts.Events.LOADING_COMPLETE, () => { if (live) fail('ts:loading_complete'); });
         mts.load();
         video.play().catch(() => {});
         return;
@@ -682,15 +707,18 @@ async function playCandidate() {
           hls = new Hls({
             enableWorker: true,
             lowLatencyMode: false,
-            backBufferLength: 15,
-            maxBufferLength: 12,
-            maxMaxBufferLength: 30,
-            liveSyncDurationCount: 1,
-            liveMaxLatencyDurationCount: 4,
+            backBufferLength: 30,
+            maxBufferLength: 30,
+            maxMaxBufferLength: 60,
+            // Começa 3 segmentos antes do fim da lista ao vivo (antes era 1 = sem margem, travava a cada segmento)
+            liveSyncDurationCount: 3,
+            liveMaxLatencyDurationCount: 10,
             startFragPrefetch: true,
-            manifestLoadingMaxRetry: 1,
-            levelLoadingMaxRetry: 1,
-            fragLoadingMaxRetry: 1
+            manifestLoadingMaxRetry: 2,
+            levelLoadingMaxRetry: 4,
+            fragLoadingMaxRetry: 4,
+            levelLoadingRetryDelay: 500,
+            fragLoadingRetryDelay: 500
           });
           hls.on(Hls.Events.ERROR, (_, d) => {
             if (!d.fatal) return;
@@ -823,6 +851,7 @@ export const Player = {
 
     video.addEventListener('playing', () => {
       spinner(false); clearTimeout(stallTimer); $('p-error').hidden = true; updatePlayIcon(); showOverlay(2500);
+      if (S) { S.playingOk = true; S.lastProg = Date.now(); }
       if (S && !S.started) { S.started = true; save(true); }
     });
     video.addEventListener('loadeddata', () => {
@@ -851,8 +880,12 @@ export const Player = {
     video.addEventListener('timeupdate', () => {
       if (!S) return;
       if (!video.paused && !video.seeking && video.readyState >= 2) spinner(false);
+      if (video.currentTime !== S.lastT) { S.lastT = video.currentTime; S.lastProg = Date.now(); }
       const d = video.duration;
-      if (isFinite(d) && d > 0) {
+      if (S.item.type === 'live') {
+        // Canal ao vivo nunca mostra duração (antes aparecia "0:13 / 0:13" quando o servidor fechava a conexão)
+        $('p-time').textContent = '';
+      } else if (isFinite(d) && d > 0) {
         $('p-fill').style.width = (video.currentTime / d) * 100 + '%';
         try { if (video.buffered.length) $('p-buf').style.width = (video.buffered.end(video.buffered.length - 1) / d) * 100 + '%'; } catch {}
         $('p-time').textContent = `${fmtTime(video.currentTime)} / ${fmtTime(d)}`;
@@ -863,11 +896,22 @@ export const Player = {
     });
     video.addEventListener('ended', () => {
       if (!S) return;
+      if (S.item.type === 'live') { fail('live:ended'); return; }
       if (S.item.type !== 'live') Store.removeProgress(S.item.id);
       if (S.item.type === 'episode' && playNextEpisode(1)) return;
       if (S.item.type !== 'live') history.back();
     });
     video.addEventListener('error', () => { if (S && !hls && !mts && video.getAttribute('src')) fail('video:' + (video.error?.code || '')); });
+
+    // Vigia de travamento do ao vivo: se a imagem ficar parada (spinner) por mais de 8s sem o usuário ter pausado,
+    // reconecta automaticamente no mesmo canal.
+    setInterval(() => {
+      if (!S || S.item.type !== 'live' || !S.playingOk || video.paused) return;
+      if (Date.now() - (S.lastProg || 0) > 8000) {
+        S.lastProg = Date.now();
+        fail('live:stall');
+      }
+    }, 2000);
 
     // Eventos do modal de Transmissão / DLNA
     castModal.addEventListener('click', async (e) => {
@@ -975,7 +1019,7 @@ export const Player = {
       else if (a === 'cast') { openCastModal(); }
       else if (a === 'copy-worker') {
         try {
-          const r = await fetch('proxy/cloudflare-worker.js?v=1.8.1', { cache: 'no-store' });
+          const r = await fetch('proxy/cloudflare-worker.js?v=1.8.4', { cache: 'no-store' });
           const code = await r.text();
           await navigator.clipboard.writeText(code);
           b.textContent = '✔ Código Copiado! Cole no seu Worker da Cloudflare';
