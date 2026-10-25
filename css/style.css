@@ -368,3 +368,20 @@ body.no-topbar #topbar, body.playing #topbar { display: none; }
 @media (min-width: 1200px) and (hover: none) {
   .card:focus { transform: scale(1.1); }
 }
+
+/* Mantém os controles utilizáveis em telas estreitas e áreas seguras de PWAs. */
+.search-box input { min-width: 0; }
+button, summary { touch-action: manipulation; }
+.p-top { padding-top: max(18px, env(safe-area-inset-top)); }
+.p-bottom { padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+@media (max-width: 480px) {
+  .p-row { flex-wrap: wrap; }
+  .p-btn { flex-shrink: 0; }
+  .p-time { font-size: 12px; }
+  .p-top { gap: 6px; }
+  .p-top .badge-live { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
+  .card:focus, .hub:focus, .prov:focus, .btn:focus { transform: none; }
+}

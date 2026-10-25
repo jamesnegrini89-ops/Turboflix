@@ -1,7 +1,7 @@
 // Rede: requisições diretas, espelho real do servidor (server_info.url),
 // resolução DNS-over-HTTPS automática (contra bloqueio de DNS da operadora)
 // e suporte opcional a Proxy HTTPS (Cloudflare Worker com conversão automática de IP bruto para .sslip.io).
-import { Store } from './storage.js?v=1.8.4';
+import { Store } from './storage.js?v=1.8.5';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -42,6 +42,7 @@ export function proxify(url, customBase) {
 }
 
 // Cache de hostnames resolvidos via DNS-over-HTTPS (Google / Cloudflare) e espelhos do servidor
+const DNS_PENDING = new Map();
 const DNS_CACHE = new Map();
 const HOST_MIRRORS = new Map(); // hostname original -> hostname alternativo (ex.: server_info.url)
 
@@ -51,6 +52,14 @@ export function registerHostMirror(originalHost, mirrorHost) {
 }
 
 export async function resolveHostIp(hostname) {
+  const key = String(hostname || '').toLowerCase();
+  if (DNS_PENDING.has(key)) return DNS_PENDING.get(key);
+  const pending = resolveHostIpOnce(hostname).finally(() => DNS_PENDING.delete(key));
+  DNS_PENDING.set(key, pending);
+  return pending;
+}
+
+async function resolveHostIpOnce(hostname) {
   if (!hostname || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.endsWith('.sslip.io') || hostname === 'localhost') return null;
   const key = hostname.toLowerCase();
   if (DNS_CACHE.has(key)) return DNS_CACHE.get(key);
@@ -59,8 +68,10 @@ export async function resolveHostIp(hostname) {
     `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(key)}&type=A`
   ];
   for (const ep of endpoints) {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 2500);
     try {
-      const r = await fetch(ep, { headers: { accept: 'application/dns-json' } });
+      const r = await fetch(ep, { signal: ctrl.signal, headers: { accept: 'application/dns-json' } });
       if (!r.ok) continue;
       const j = await r.json();
       const ans = (j.Answer || []).find((a) => a.type === 1 && /^\d+\.\d+\.\d+\.\d+$/.test(a.data));
@@ -69,6 +80,7 @@ export async function resolveHostIp(hostname) {
         return ans.data;
       }
     } catch { /* ignore */ }
+    finally { clearTimeout(timeout); }
   }
   return null;
 }
@@ -153,7 +165,7 @@ async function fetchWithTimeout(url, ms) {
   try {
     const r = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r;
+    return await r.text();
   } finally { clearTimeout(t); }
 }
 
@@ -181,8 +193,7 @@ export async function fetchText(url, ms = 120000) {
   let lastErr;
   for (const u of tries) {
     try {
-      const r = await fetchWithTimeout(u, ms);
-      const txt = await r.text();
+      const txt = await fetchWithTimeout(u, ms);
       if (txt && txt.trim().length > 0) return txt;
     } catch (e) {
       lastErr = e;
@@ -196,8 +207,7 @@ export async function fetchJSON(url, ms = 90000) {
   let lastErr;
   for (const u of tries) {
     try {
-      const r = await fetchWithTimeout(u, ms);
-      const txt = await r.text();
+      const txt = await fetchWithTimeout(u, ms);
       return JSON.parse(txt);
     } catch (e) {
       lastErr = e;

@@ -1,6 +1,6 @@
 // Cliente da API Xtream Codes (player_api.php).
-import { fetchJSON, resolveHostIp, withIpFallback, registerHostMirror } from './net.js?v=1.8.4';
-import { Store } from './storage.js?v=1.8.4';
+import { fetchJSON, resolveHostIp, withIpFallback, registerHostMirror } from './net.js?v=1.8.5';
+import { Store } from './storage.js?v=1.8.5';
 
 export function normServer(s) {
   let v = String(s || '').trim().replace(/\/+$/, '');
@@ -97,7 +97,7 @@ export async function loadXtream(cfg, progress = () => {}) {
 export function xtreamUrls(cfg, item) {
   const base = normServer(cfg.server);
   const up = `${encodeURIComponent(cfg.user)}/${encodeURIComponent(cfg.pass)}`;
-  const fmt = cfg.preferredOutput || Store.settings.liveFormat;
+  const fmt = Store.settings.liveFormat;
   let primary = [];
   if (item.type === 'live') {
     const m3u8 = `${base}/live/${up}/${item.sid}.m3u8`;

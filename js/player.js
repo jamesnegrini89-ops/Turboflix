@@ -1,12 +1,12 @@
 // Player de vídeo otimizado para abertura instantânea (low-latency) + Transmissão DLNA / Cast:
 // - MPEG-TS (.ts) com stashBuffer reduzido (64 KB) para começar no primeiro keyframe (~1-2s)
 // - HLS (.m3u8) começando no último segmento ao vivo com buffer inicial mínimo
-// - Ponte de streaming local via Service Worker (/__stream__) + suporte a Cloudflare Worker v1.8.4 (.sslip.io)
+// - Ponte de streaming local via Service Worker (/__stream__) + suporte a Cloudflare Worker v1.8.1 (.sslip.io)
 //   para filmes/séries MP4/MKV http:// em páginas https:// (Desktop e Chrome Android)
 // - Transmissão DLNA (UPnP AVTransport SetAVTransportURI + Play), Cast Nativo / AirPlay e VLC / Web Video Caster
-import { Store } from './storage.js?v=1.8.4';
-import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.8.4';
-import { icon } from './icons.js?v=1.8.4';
+import { Store } from './storage.js?v=1.8.5';
+import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.8.5';
+import { icon } from './icons.js?v=1.8.5';
 
 const $ = (id) => document.getElementById(id);
 let el, video, overlay, castModal, hls = null, mts = null, S = null, hideTimer = null, stallTimer = null, lastSave = 0;
@@ -174,7 +174,7 @@ async function ensureSwBridge() {
       swBridgeReady = true;
       return true;
     }
-    const reg = await navigator.serviceWorker.register('sw.js?v=1.8.4', { updateViaCache: 'none' });
+    const reg = await navigator.serviceWorker.register('sw.js?v=1.8.5', { updateViaCache: 'none' });
     await reg.update().catch(() => {});
     await Promise.race([
       navigator.serviceWorker.ready,
@@ -291,7 +291,7 @@ function showError(msg) {
       ${hasProxy() ? `
         <b>💡 Usando Cloudflare Worker no Chrome do Celular?</b><br>
         O servidor IPTV redireciona os vídeos para IPs diretos de CDN (que o Worker antigo bloqueava com erro 502).<br>
-        • Clique em <b>Copiar Código do Worker v1.8.4</b> abaixo e cole no seu Worker da Cloudflare (leva 15s), <b>OU</b><br>
+        • Clique em <b>Copiar Código do Worker v1.8.1</b> abaixo e cole no seu Worker da Cloudflare (leva 15s), <b>OU</b><br>
         • No Chrome do Android, toque no ícone ao lado da barra de endereço → <b>Permissões / Configurações do site</b> → <b>Conteúdo inseguro → Permitir</b>.
       ` : `
         <b>💡 No navegador Chrome (Celular ou PC):</b><br>
@@ -303,7 +303,7 @@ function showError(msg) {
     <div style="margin-top:12px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
       <button class="btn primary focusable" data-p="retry">${icon('refresh')} Tentar novamente</button>
       <button class="btn focusable" data-p="cast">${icon('cast')} Transmitir via DLNA / VLC</button>
-      ${isHttpsBrowser ? `<button class="btn focusable" data-p="copy-worker">${icon('link')} Copiar Código do Worker v1.8.4</button>` : ''}
+      ${isHttpsBrowser ? `<button class="btn focusable" data-p="copy-worker">${icon('link')} Copiar Código do Worker v1.8.1</button>` : ''}
     </div>
     ${workerTip}
     <p class="dim" style="margin-top:12px">Pressione VOLTAR para sair${S?.item.type === 'live' ? ' ou ▲/▼ para trocar de canal' : ''}.</p></div>`;
@@ -640,19 +640,24 @@ function liveReconnect(reason) {
 }
 
 function fail(reason) {
-  if (!S) return;
+  if (!S || S.retryPending) return;
+  S.retryPending = true;
   if (liveReconnect(reason)) return;
-  console.warn('Tentativa falhou no player:', reason, S.cands[S.ci]);
+  console.warn('Tentativa falhou no player:', reason);
   if (S.ci + 1 < S.cands.length) {
     S.ci++;
-    setTimeout(() => { if (S) playCandidate(); }, 350);
+    const token = S.token;
+    setTimeout(() => { if (S?.token === token) playCandidate(); }, 350);
     return;
   }
   showError('O canal ou vídeo pode estar fora do ar ou com limite de 1 tela em uso.');
 }
 
 async function playCandidate() {
+  if (!S) return;
+  S.token = Math.random();
   teardown();
+  S.retryPending = false;
   const c = S.cands[S.ci];
   if (!c) { showError('Nenhum link de reprodução disponível.'); return; }
   $('p-error').hidden = true;
@@ -689,9 +694,9 @@ async function playCandidate() {
           }
         );
         mts.attachMediaElement(video);
-        mts.on(mpegts.Events.ERROR, (t, d) => fail('ts:' + t + ' ' + d));
+        mts.on(mpegts.Events.ERROR, (t, d) => { if (S?.token === token) fail('ts:' + t + ' ' + d); });
         // Servidor fechou a conexão do .ts (Connection: close) -> reconecta em vez de "terminar" o canal
-        mts.on(mpegts.Events.LOADING_COMPLETE, () => { if (live) fail('ts:loading_complete'); });
+        mts.on(mpegts.Events.LOADING_COMPLETE, () => { if (live && S?.token === token) fail('ts:loading_complete'); });
         mts.load();
         video.play().catch(() => {});
         return;
@@ -721,7 +726,7 @@ async function playCandidate() {
             fragLoadingRetryDelay: 500
           });
           hls.on(Hls.Events.ERROR, (_, d) => {
-            if (!d.fatal) return;
+            if (S?.token !== token || !d.fatal) return;
             if (d.type === Hls.ErrorTypes.MEDIA_ERROR && !S.recovered) { S.recovered = true; hls.recoverMediaError(); }
             else fail('hls:' + d.details);
           });
@@ -738,7 +743,7 @@ async function playCandidate() {
     video.preload = 'auto';
     video.src = c.url;
     video.play().catch(() => {});
-  } catch (e) { fail(e.message); }
+  } catch (e) { if (S?.token === token) fail(e.message); }
 }
 
 function showOverlay(ms = 4000) {
@@ -807,6 +812,9 @@ function playNextEpisode(step = 1) {
 }
 
 async function start(item, opts = {}) {
+  save(true);
+  S = null;
+  teardown();
   closeCastModal();
   const startToken = Math.random();
   S = { item, list: opts.list || [], start: opts.start || 0, cands: [], ci: 0, started: false, startToken, openedAt: Date.now() };
@@ -825,7 +833,12 @@ async function start(item, opts = {}) {
   showOverlay();
   spinner(true);
   onChange(item);
-  const cands = await prepareCandidates(item);
+  let cands;
+  try { cands = await prepareCandidates(item); }
+  catch {
+    if (S?.startToken === startToken) showError('Não foi possível preparar a reprodução. Tente novamente.');
+    return;
+  }
   if (!S || S.startToken !== startToken) return;
   S.cands = cands;
   playCandidate();
@@ -844,7 +857,7 @@ export const Player = {
     initStreamBridge();
 
     setTimeout(() => {
-      loadLib('mts').catch(() => {});
+      loadLib('mpegts').catch(() => {});
       loadLib('hls').catch(() => {});
       ensureSwBridge().catch(() => {});
     }, 400);
@@ -1019,7 +1032,7 @@ export const Player = {
       else if (a === 'cast') { openCastModal(); }
       else if (a === 'copy-worker') {
         try {
-          const r = await fetch('proxy/cloudflare-worker.js?v=1.8.4', { cache: 'no-store' });
+          const r = await fetch('proxy/cloudflare-worker.js?v=1.8.5', { cache: 'no-store' });
           const code = await r.text();
           await navigator.clipboard.writeText(code);
           b.textContent = '✔ Código Copiado! Cole no seu Worker da Cloudflare';
@@ -1047,6 +1060,16 @@ export const Player = {
           e.preventDefault();
           e.stopImmediatePropagation();
           closeCastModal();
+        } else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) {
+          const active = document.activeElement;
+          if (active?.matches('input') && (k === 'ArrowLeft' || k === 'ArrowRight')) return;
+          const controls = [...castModal.querySelectorAll('button, input')].filter((x) => !x.disabled && x.offsetParent !== null);
+          const step = k === 'ArrowUp' || k === 'ArrowLeft' ? -1 : 1;
+          const index = controls.indexOf(active);
+          const next = controls[Math.max(0, Math.min(controls.length - 1, index + step))];
+          next?.focus();
+          e.preventDefault();
+          e.stopImmediatePropagation();
         }
         return;
       }
@@ -1086,8 +1109,10 @@ export const Player = {
     if (!S) return;
     closeCastModal();
     save(true);
-    teardown();
     S = null;
+    teardown();
+    clearTimeout(hideTimer);
+    clearTimeout($('p-zap')._t);
     el.hidden = true;
     $('p-zap').hidden = true;
     document.body.classList.remove('playing');
@@ -1101,7 +1126,7 @@ export const Player = {
       if (document.fullscreenElement) { if (toggle) document.exitFullscreen(); return; }
       const r = (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)?.call(document.documentElement);
       Promise.resolve(r).then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
-      if (!document.requestFullscreen && video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+      if (!document.documentElement.requestFullscreen && !document.documentElement.webkitRequestFullscreen && video.webkitEnterFullscreen) video.webkitEnterFullscreen();
     } catch {}
   }
 };
