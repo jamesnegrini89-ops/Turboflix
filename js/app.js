@@ -1,19 +1,22 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
-import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.4';
-import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.4';
-import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.4';
-import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.4';
-import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.4';
-import { Player } from './player.js?v=1.8.4';
-import { icon, hydrateIcons } from './icons.js?v=1.8.4';
+import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.5';
+import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.5';
+import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.5';
+import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.5';
+import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.5';
+import { Player } from './player.js?v=1.8.5';
+import { icon, hydrateIcons } from './icons.js?v=1.8.5';
 
-const APP_VERSION = '1.8.4';
+const APP_VERSION = '1.8.5';
 const $ = (s, r = document) => r.querySelector(s);
 const view = $('#view');
 
 let DATA = null;            // { live, movies, series, episodes, source }
 let INDEX = new Map();      // id -> item
 let CATCACHE = {};          // cache das categorias calculadas
+let searchTimer = null;
+let routeRevision = 0;
+let HOME_RECENT = null;
 let SEARCHIDX = null;       // índice de busca
 let lastHash = '';
 let installPrompt = null;
@@ -93,6 +96,7 @@ function setData(d) {
   for (const i of d.series) INDEX.set(i.id, i);
   CATCACHE = {};
   SEARCHIDX = null;
+  HOME_RECENT = null;
 }
 
 function lookup(id) {
@@ -151,13 +155,17 @@ function setNavActive(h) {
 
 // ---------------------------------------------------------------- Roteador
 async function route() {
+  const revision = ++routeRevision;
+  clearTimeout(searchTimer);
   const h = location.hash || '#/home';
   if (h === '#/play') { if (!Player.active) location.replace(lastHash || '#/home'); return; }
   if (Player.active) Player.close();
 
   const parts = h.replace(/^#\/?/, '').split('/');
   const name = parts[0] || 'home';
-  const param = decodeURIComponent(parts.slice(1).join('/'));
+  let param;
+  try { param = decodeURIComponent(parts.slice(1).join('/')); }
+  catch { go('#/home'); return; }
 
   // voltando do player para a mesma tela de categoria: mantém tudo como estava
   if (h === lastHash && name === 'browse' && view.dataset.view === 'browse' && view.dataset.key === param) {
@@ -174,6 +182,7 @@ async function route() {
     if (location.hash !== h && !(h === '#/home' && !location.hash)) return;
   }
 
+  gridObserver?.disconnect();
   REG.clear(); LISTS.clear();
   FAVSET = new Set(Store.favorites().map((f) => f.id));
   view.scrollTop = 0; window.scrollTo(0, 0);
@@ -190,6 +199,7 @@ async function route() {
     case 'login': renderLogin(); break;
     default: renderHome();
   }
+  if (revision !== routeRevision) return;
   hydrateIcons(view);
   applyBackgrounds();
   if (!['search', 'login'].includes(name) || name === 'search' && SEARCHSTATE.q) restoreFocus(h);
@@ -299,8 +309,9 @@ function renderHome() {
   const provs = PROVIDERS.filter((p) => catItems(p.key).length);
   const shownProvs = provs.length ? provs : PROVIDERS.slice(0, 8);
   const byAdded = (list) => (list.some((i) => i.added) ? [...list].sort((a, b) => (b.added || 0) - (a.added || 0)) : list).slice(0, 30);
-  const recentMovies = byAdded(DATA.movies);
-  const recentSeries = byAdded(DATA.series);
+  HOME_RECENT ||= { movies: byAdded(DATA.movies), series: byAdded(DATA.series) };
+  const recentMovies = HOME_RECENT.movies;
+  const recentSeries = HOME_RECENT.series;
   const sports = catItems('sports').slice(0, 30);
   LISTS.set('cont', cont.map((p) => p.item)); LISTS.set('fav', favs); LISTS.set('sports', sports);
 
@@ -383,10 +394,11 @@ function fillGrid(key, group) {
   if (bm) bm.scrollTop = 0;
   const liveMostly = list.filter((i) => i.type === 'live').length > list.length / 2;
   grid.className = 'grid ' + (liveMostly ? 'grid-live' : '');
+  REG.clear();
   grid.innerHTML = '';
   let shown = 0;
   const more = () => {
-    if (shown >= list.length) return;
+    if (!grid.isConnected || shown >= list.length) return;
     // garante que o item focado anteriormente seja renderizado
     const memId = FOCUSMEM[location.hash];
     let n = 120;
@@ -394,14 +406,14 @@ function fillGrid(key, group) {
     const chunk = list.slice(shown, shown + n);
     shown += chunk.length;
     grid.insertAdjacentHTML('beforeend', chunk.map((i) => card(i, { list: 'browse' })).join(''));
-    hydrateIcons(grid);
+    if (shown >= list.length) gridObserver?.disconnect();
   };
   grid._loadMore = more;
   more();
   if (!list.length) grid.innerHTML = `<p class="dim pad">Nenhum item neste grupo.</p>`;
   gridObserver?.disconnect();
   gridObserver = new IntersectionObserver((ents) => { if (ents.some((e) => e.isIntersecting)) more(); }, { rootMargin: '800px' });
-  gridObserver.observe($('#more'));
+  if (shown < list.length) gridObserver.observe($('#more'));
 }
 
 // ---------------------------------------------------------------- Filme
@@ -431,7 +443,7 @@ async function renderMovie(id) {
     </div>`;
   if (Store.cfg?.type === 'xtream' && it.sid) {
     xtreamVodInfo(Store.cfg, it.sid).then((info) => {
-      if (view.dataset.key !== id) return;
+      if (view.dataset.key !== id || view.dataset.view !== 'movie') return;
       if (info.plot) $('#plot').textContent = info.plot;
       const meta = [it.group, info.genre, (info.releasedate || '').slice(0, 4), info.duration, info.rating ? '★ ' + info.rating : ''].filter(Boolean);
       $('#meta').innerHTML = meta.map((m) => `<span>${esc(m)}</span>`).join('');
@@ -444,6 +456,7 @@ async function renderMovie(id) {
 
 // ---------------------------------------------------------------- Série
 async function renderSeries(id) {
+  const revision = routeRevision;
   const it = lookup(id);
   if (!it) { go('#/home'); return; }
   REG.set(it.id, it);
@@ -474,7 +487,7 @@ async function renderSeries(id) {
     if (Store.cfg?.type === 'xtream' && it.sid) {
       const r = await xtreamSeriesInfo(Store.cfg, it);
       eps = r.episodes;
-      if (view.dataset.key !== id) return;
+      if (revision !== routeRevision) return;
       if (r.info?.plot) $('#plot').textContent = r.info.plot;
       const meta = [it.group, r.info?.genre, (r.info?.releaseDate || '').slice(0, 4), r.info?.rating ? '★ ' + r.info.rating : ''].filter(Boolean);
       $('#meta').innerHTML = meta.map((m) => `<span>${esc(m)}</span>`).join('');
@@ -484,10 +497,11 @@ async function renderSeries(id) {
       eps = DATA.episodes[it.seriesKey] || [];
     }
   } catch (e) {
+    if (revision !== routeRevision) return;
     $('#episodes').innerHTML = `<p class="dim pad">Erro ao carregar episódios: ${esc(e.message)}</p>`;
     return;
   }
-  if (view.dataset.key !== id) return;
+  if (revision !== routeRevision) return;
 
   const epItems = eps.map((e) => ({
     id: e.id, name: e.name, logo: e.logo || it.logo, type: 'episode', url: e.url, season: e.season, episode: e.episode,
@@ -538,11 +552,14 @@ function renderSearch() {
       <div id="results"></div>
     </div>`;
   const q = $('#q');
-  let t;
-  q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { SEARCHSTATE.q = q.value; doSearch(); }, 350); });
-  q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { SEARCHSTATE.q = q.value; doSearch(); q.blur(); focusFirst('#results .card'); } });
+  q.addEventListener('input', () => {
+    SEARCHSTATE.q = q.value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { if (q.isConnected) doSearch(); }, 200);
+  });
+  q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(searchTimer); SEARCHSTATE.q = q.value; doSearch(); q.blur(); focusFirst('#results .card'); } });
   doSearch();
-  if (!SEARCHSTATE.q) setTimeout(() => q.focus(), 50);
+  if (!SEARCHSTATE.q) setTimeout(() => { if (q.isConnected) q.focus(); }, 50);
 }
 
 function doSearch() {
@@ -619,12 +636,12 @@ function renderSettings() {
 
       <div class="panel">
         <h3>${icon('link')} Proxy HTTPS — Cloudflare Worker (opcional)</h3>
-        <p class="dim">Para reproduzir canais, filmes e séries no Chrome do celular via Cloudflare Worker, certifique-se de usar o código atualizado <b>v1.8.4</b> (que converte os IPs dos CDNs IPTV para <code>.sslip.io</code>).</p>
+        <p class="dim">Para reproduzir canais, filmes e séries no Chrome do celular via Cloudflare Worker, certifique-se de usar o código atualizado <b>v1.8.1</b> (que converte os IPs dos CDNs IPTV para <code>.sslip.io</code>).</p>
         <input id="proxy" class="field focusable" type="url" placeholder="https://seu-proxy.workers.dev" value="${esc(s.proxy)}">
         <div class="actions">
           <button class="btn primary focusable" data-act="saveproxy">Salvar proxy</button>
           <button class="btn focusable" data-act="testproxy">Testar</button>
-          <button class="btn focusable" data-act="copyworker">${icon('link')} Copiar código do Worker v1.8.4</button>
+          <button class="btn focusable" data-act="copyworker">${icon('link')} Copiar código do Worker v1.8.1</button>
         </div>
       </div>
 
@@ -686,7 +703,9 @@ function renderLogin() {
   setTimeout(() => focusFirst('.tab.sel'), 50);
 }
 
+let loginPending = false;
 async function doLogin() {
+  if (loginPending) return;
   const err = $('#login-err');
   err.hidden = true;
   const rawProxy = ($('#login-proxy')?.value || '').trim();
@@ -713,6 +732,7 @@ async function doLogin() {
     const xt = xtreamFromM3uUrl(url);
     if (xt) { alt = cfg; cfg = xt; }
   }
+  loginPending = true;
   showLoading('Conectando...');
   try {
     let d;
@@ -739,7 +759,7 @@ async function doLogin() {
     hideLoading();
     err.textContent = e.message;
     err.hidden = false;
-  }
+  } finally { loginPending = false; }
 }
 
 // ---------------------------------------------------------------- Ações
@@ -830,20 +850,20 @@ async function handleAction(el) {
         const r = await fetch(p.replace(/\/+$/, '') + '/');
         const txt = await r.text().catch(() => '');
         if (!r.ok) { toast('Proxy respondeu com erro ' + r.status); break; }
-        if (txt.includes('1.8.4') || r.headers.get('x-worker-version') === '1.8.4') {
-          toast('✔ Worker v1.8.4 atualizado e funcionando!');
+        if (txt.includes('TurboFlix Proxy v1.8.1') || r.headers.get('x-worker-version') === '1.8.1') {
+          toast('✔ Worker v1.8.1 atualizado e funcionando!');
         } else {
-          toast('⚠️ Worker online, mas desatualizado! Clique em "Copiar código do Worker v1.8.4" e atualize na Cloudflare.');
+          toast('⚠️ Worker online, mas desatualizado! Clique em "Copiar código do Worker v1.8.1" e atualize na Cloudflare.');
         }
       } catch { toast('Não foi possível acessar o proxy'); }
       break;
     }
     case 'copyworker': {
       try {
-        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.4', { cache: 'no-store' });
+        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.5', { cache: 'no-store' });
         const code = await r.text();
         await navigator.clipboard.writeText(code);
-        toast('✔ Código do Worker v1.8.4 copiado! Cole no seu Worker da Cloudflare e clique em Deploy.');
+        toast('✔ Código do Worker v1.8.1 copiado! Cole no seu Worker da Cloudflare e clique em Deploy.');
       } catch {
         window.open('proxy/cloudflare-worker.js', '_blank');
       }
@@ -891,7 +911,7 @@ function initEvents() {
       e.preventDefault();
       if (e.repeat || okTimer) return;
       okLong = false;
-      okTimer = setTimeout(() => { okLong = true; okTimer = null; toggleFav(lookup(a.dataset.id)); }, 700);
+      okTimer = setTimeout(() => { okLong = true; okTimer = null; lastKeyAct = Date.now(); toggleFav(lookup(a.dataset.id)); }, 700);
     }
   }, true);
   document.addEventListener('keyup', (e) => {
@@ -907,9 +927,13 @@ function initEvents() {
           handleAction(a);
         }
       }
+      if (okLong) lastKeyAct = Date.now();
       okLong = false;
     }
   }, true);
+  const cancelOK = () => { clearTimeout(okTimer); okTimer = null; okLong = false; };
+  window.addEventListener('blur', cancelOK);
+  document.addEventListener('focusout', cancelOK);
 
   // imagens quebradas mostram as iniciais
   document.addEventListener('error', (e) => {
@@ -950,10 +974,10 @@ function boot() {
   Player.init({ resolve: resolveUrls });
   startClock();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js?v=1.8.4', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=1.8.5', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
   if (!location.hash) location.replace(Store.cfg ? '#/home' : '#/login');
-  route();
+  else route();
 }
 
 boot();

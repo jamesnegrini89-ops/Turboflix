@@ -3,26 +3,27 @@
 // 2. Faz ponte de streaming local (/__stream__?url=...) para vídeos MP4/MKV http://
 //    quando o app roda em https:// (GitHub Pages), evitando que o elemento <video>
 //    do navegador bloqueie IPs http:// ou force upgrade para https://.
-const VERSION = 'turboflix-v1.8.4';
+const VERSION = 'turboflix-v1.8.5';
 const SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
-  './css/style.css?v=1.8.4',
-  './js/app.js?v=1.8.4',
-  './js/storage.js?v=1.8.4',
-  './js/net.js?v=1.8.4',
-  './js/m3u.js?v=1.8.4',
-  './js/xtream.js?v=1.8.4',
-  './js/nav.js?v=1.8.4',
-  './js/player.js?v=1.8.4',
-  './js/icons.js?v=1.8.4',
+  './css/style.css?v=1.8.5',
+  './js/app.js?v=1.8.5',
+  './js/storage.js?v=1.8.5',
+  './js/net.js?v=1.8.5',
+  './js/m3u.js?v=1.8.5',
+  './js/xtream.js?v=1.8.5',
+  './js/nav.js?v=1.8.5',
+  './js/player.js?v=1.8.5',
+  './js/icons.js?v=1.8.5',
   './js/vendor/hls.min.js',
   './js/vendor/mpegts.js',
   './proxy/cloudflare-worker.js',
   './icons/icon.svg',
   './icons/icon-192.png',
-  './icons/icon-512.png'
+  './icons/icon-512.png',
+  './icons/icon-maskable-512.png'
 ];
 
 self.addEventListener('install', (e) => {
@@ -36,7 +37,7 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('turboflix-') && k !== VERSION).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -124,20 +125,25 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  url.hash = '';
   if (url.origin !== self.location.origin) return;
   if (url.pathname.endsWith('/__stream__')) {
     e.respondWith(handleStream(e, url));
     return;
   }
-  e.respondWith(
-    fetch(req, { cache: 'no-cache' })
-      .then((res) => {
-        if (res.ok) {
-          const copy = res.clone();
-          caches.open(VERSION).then((c) => c.put(req, copy));
-        }
-        return res;
-      })
-      .catch(() => caches.match(req).then((r) => r || caches.match('./index.html')))
-  );
+  // Only exact shell URLs are cacheable: never playlists, credentials or media.
+  const shellUrls = new Set(SHELL.map((path) => new URL(path, self.registration.scope).href));
+  if (!shellUrls.has(url.href)) return;
+  e.respondWith((async () => {
+    const cache = await caches.open(VERSION);
+    const cached = await cache.match(url.href);
+    if (cached) return cached;
+    try {
+      const response = await fetch(req);
+      if (response.ok) await cache.put(url.href, response.clone());
+      return response;
+    } catch {
+      return Response.error();
+    }
+  })());
 });

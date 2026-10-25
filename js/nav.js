@@ -130,16 +130,36 @@ function findGeometricBest(cur, poolEls, dir) {
 }
 
 export function moveFocus(dir) {
-  const els = candidates();
-  if (!els.length) return false;
+  if (document.querySelector('#player:not([hidden])')) return false;
+  let cachedCandidates;
+  const allCandidates = () => cachedCandidates || (cachedCandidates = candidates());
   const cur = document.activeElement;
-  if (!cur || !els.includes(cur)) { focusEl(els[0]); return true; }
+  if (!cur?.matches('.focusable') || !visible(cur)) {
+    const first = allCandidates()[0];
+    if (!first) return false;
+    focusEl(first); return true;
+  }
 
   // ================================================================
   // 1. NAVEGAÇÃO NA LISTA LATERAL DE CATEGORIAS (.grp-list em .browse)
   // ================================================================
   const grpList = cur.closest('.grp-list');
   if (grpList) {
+    // No celular as categorias formam uma faixa horizontal.
+    if (getComputedStyle(grpList).display === 'flex') {
+      const items = [...grpList.querySelectorAll('.grp.focusable')];
+      const index = items.indexOf(cur);
+      if (dir === 'left' || dir === 'right') {
+        const next = items[index + (dir === 'right' ? 1 : -1)];
+        if (next) focusEl(next);
+        return true;
+      }
+      if (dir === 'down') {
+        const first = document.querySelector('.browse-main .card.focusable');
+        if (first) focusEl(first);
+        return true;
+      }
+    }
     const grps = [...grpList.querySelectorAll('.grp.focusable')].filter(visible);
     const idx = grps.indexOf(cur);
     if (idx >= 0) {
@@ -178,7 +198,7 @@ export function moveFocus(dir) {
   // ================================================================
   const grid = cur.closest('.grid');
   if (grid && cur.classList.contains('card')) {
-    let cards = [...grid.querySelectorAll('.card.focusable')].filter(visible);
+    let cards = [...grid.querySelectorAll('.card.focusable:not([hidden]):not(:disabled)')];
     const idx = cards.indexOf(cur);
     if (idx >= 0) {
       const cols = getGridCols(grid, cards);
@@ -188,7 +208,7 @@ export function moveFocus(dir) {
         // Se estiver perto do fim dos itens renderizados na grade, carrega mais itens automaticamente
         if (idx + cols * 2 >= cards.length && typeof grid._loadMore === 'function') {
           grid._loadMore();
-          cards = [...grid.querySelectorAll('.card.focusable')].filter(visible);
+          cards = [...grid.querySelectorAll('.card.focusable:not([hidden]):not(:disabled)')];
         }
         if (idx + cols < cards.length) {
           focusEl(cards[idx + cols]);
@@ -202,7 +222,7 @@ export function moveFocus(dir) {
         }
         // Se houver outra seção abaixo (ex.: na tela de Busca ou Minha Lista), desce para ela
         if (!grid.closest('.browse-main')) {
-          const below = findGeometricBest(cur, els.filter((e) => !grid.contains(e) && !e.closest('.groups')), 'down');
+          const below = findGeometricBest(cur, allCandidates().filter((e) => !grid.contains(e) && !e.closest('.groups')), 'down');
           if (below) { focusEl(below); return true; }
         }
         return true;
@@ -214,7 +234,7 @@ export function moveFocus(dir) {
           return true;
         }
         // Está na primeira linha da grade: sobe para o componente acima (chips de busca, seção anterior ou #topbar)
-        const abovePool = els.filter((e) => !grid.contains(e) && !e.closest('.groups'));
+        const abovePool = allCandidates().filter((e) => !grid.contains(e) && !e.closest('.groups'));
         const above = findGeometricBest(cur, abovePool, 'up')
           || document.querySelector('#topbar .nav-btn.active')
           || document.querySelector('#topbar .nav-btn');
@@ -306,7 +326,7 @@ export function moveFocus(dir) {
   // ================================================================
   // 6. NAVEGAÇÃO GEOMÉTRICA GERAL (Início, Detalhes, Login, Configurações)
   // ================================================================
-  const best = findGeometricBest(cur, els, dir);
+  const best = findGeometricBest(cur, allCandidates(), dir);
   if (best) {
     focusEl(best);
     return true;

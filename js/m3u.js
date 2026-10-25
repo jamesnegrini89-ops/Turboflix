@@ -1,5 +1,5 @@
 // Leitor de listas M3U / M3U8 (#EXTM3U / #EXTINF).
-import { fetchText, hash } from './net.js?v=1.8.4';
+import { fetchText, hash } from './net.js?v=1.8.5';
 
 const EP_RE = /^(.*?)[\s._\-|:]*[Ss](\d{1,2})\s*[EeXx](\d{1,4})\b/;
 const EP_RE2 = /^(.*?)[\s._\-|:]*(\d{1,2})x(\d{1,3})\b/;
