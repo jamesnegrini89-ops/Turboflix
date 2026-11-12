@@ -87,17 +87,31 @@ Para usar listas e canais `http://` sem qualquer bloqueio:
 
 ---
 
-## Tela flutuante no Android (versão web 1.8.7)
+## Tela flutuante no Android (versão web 1.8.8)
 
 Durante a reprodução, toque no ícone **Tela flutuante** no canto superior do player. Se o navegador permitir Picture-in-Picture, o vídeo continuará numa janela sobre outros aplicativos, com controles nativos de reprodução. O Android gerencia o tamanho e os gestos de pinça, quando compatíveis.
 
 O TurboFlix também registra ações de Media Session para permitir que navegadores compatíveis solicitem PiP automaticamente ao trocar de aba ou minimizar, mas **não há garantia de ativação automática**. A API web normalmente exige interação do usuário. Verifique as permissões de Picture-in-Picture para o navegador no Android.
 
-**Atenção:** os arquivos APK deste repositório não são recompilados por esta alteração. Um aplicativo Android nativo com WebView pode exigir suporte a PiP na Activity/AndroidManifest (incluindo `supportsPictureInPicture` e `setAutoEnterEnabled`) para entrar automaticamente na janela flutuante ao pressionar Home. Sem o projeto-fonte Android e uma nova compilação do APK, este recurso automático não pode ser garantido nesses pacotes.
+**Atenção:** o APK original 1.8.5 permanece sem PiP nativo. O novo APK Android PiP 1.8.7 tem suporte nativo, sujeito à compatibilidade do dispositivo. Consulte `android/README.md`.
 
 
-## Compatibilidade Chrome 1.8.7
+## Compatibilidade Chrome 1.8.8
 
 As versões de importação dos módulos JavaScript foram unificadas, evitando caches de rede e DNS independentes entre os componentes do app. O Picture-in-Picture é carregado separadamente e não deve impedir a inicialização do player principal. Se a política do Chrome recusar a reprodução automática, o aplicativo oferece o botão **Toque para reproduzir** para tentar novamente a partir de um gesto explícito.
 
 **Importante:** quando um servidor IPTV utiliza HTTP e o aplicativo roda em HTTPS (GitHub Pages), o Chrome pode bloquear conteúdo misto ou CORS. Um proxy HTTPS compatível continua necessário nesses casos. Os dados de acesso IPTV não foram alterados.
+
+
+### Correção de capas e logotipos na versão web 1.8.8
+
+Pôsteres e logotipos HTTP hospedados fora do servidor IPTV não são mais enviados
+ao proxy restrito de reprodução. Para imagens públicas sem parâmetros sensíveis,
+o site usa um serviço HTTPS de imagens (`wsrv.nl`); imagens do próprio servidor
+continuam usando o Worker configurado. Imagens privadas ou de servidores que
+bloqueiam acesso externo ainda podem não aparecer. Vídeos, canais e autenticação
+mantêm seus fluxos anteriores.
+
+O APK Android 1.8.7 funciona como contêiner WebView do site e recebe essa
+atualização no próximo carregamento online; não é preciso reinstalá-lo só
+para alterar o tratamento das imagens.

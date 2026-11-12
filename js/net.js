@@ -1,7 +1,7 @@
 // Rede: requisições diretas, espelho real do servidor (server_info.url),
 // resolução DNS-over-HTTPS automática (contra bloqueio de DNS da operadora)
 // e suporte opcional a Proxy HTTPS (Cloudflare Worker com conversão automática de IP bruto para .sslip.io).
-import { Store } from './storage.js?v=1.8.7';
+import { Store } from './storage.js?v=1.8.8';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -149,14 +149,37 @@ export async function buildFetchCandidates(url) {
   return [...new Set(list)];
 }
 
-/** URL de imagem: usa wsrv.nl com o IP resolvido quando a imagem é http:// numa página https://. */
+/** Imagens são independentes do proxy de vídeo.
+ * O Worker protege a origem IPTV e não aceita domínios externos de pôsteres.
+ * Para imagens HTTP públicas, utiliza um conversor HTTPS de imagens; URLs com
+ * parâmetros sensíveis não são enviadas a serviços externos.
+ */
 export function imgUrl(u) {
   if (!u) return '';
-  if (isMixed(u)) {
-    if (hasProxy()) return proxify(u);
-    return `https://wsrv.nl/?url=${encodeURIComponent(u)}&default=1`;
-  }
-  return u;
+  const source = String(u).trim();
+  if (!isMixed(source)) return source;
+  if (!hasProxy()) return `https://wsrv.nl/?url=${encodeURIComponent(source)}&default=1`;
+  try {
+    const image = new URL(source);
+    const cfg = Store.cfg || {};
+    const origin = new URL(cfg.server || cfg.url || location.href);
+    // Logotipos da origem IPTV seguem no Worker, inclusive URLs com credenciais.
+    if (image.hostname.toLowerCase() === origin.hostname.toLowerCase()) {
+      return proxify(source);
+    }
+    // Imagens externas HTTP podem ser servidas via HTTPS, exceto URLs privadas
+    // ou contendo possíveis tokens e credenciais.
+    const paramsAllowed = new Set(['w','h','width','height','q','quality','fit','crop','format','auto','size','dpr']);
+    const host = image.hostname.toLowerCase();
+    const ip = /^(\d{1,3}\.){3}\d{1,3}$/.test(host);
+    const safeHost = !ip && host !== 'localhost' && !host.endsWith('.local') && !host.endsWith('.internal');
+    const safeParams = [...image.searchParams.keys()].every(k => paramsAllowed.has(k.toLowerCase()));
+    const safePath = !/(?:\/live\/|\/movie\/|\/series\/|\/get\.php|\/player_api\.php)/i.test(image.pathname);
+    if (safeHost && safeParams && safePath && !image.username && !image.password) {
+      return `https://wsrv.nl/?url=${encodeURIComponent(source)}&default=1`;
+    }
+  } catch { /* utiliza o caminho restrito existente */ }
+  return proxify(source);
 }
 
 async function fetchWithTimeout(url, ms) {
