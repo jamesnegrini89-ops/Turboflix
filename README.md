@@ -14,6 +14,7 @@ Aplicativo web progressivo (**PWA**) inspirado no visual espacial roxo do **Turb
   - Canais ao vivo em **HLS (`.m3u8`)** via `hls.js` e **MPEG-TS (`.ts`)** via `mpegts.js`, além de vídeos **MP4/MKV/WebM** nativos.
   - Troca rápida de canal com **▲ / ▼** no controle remoto.
   - Avanço/retrocesso de 10s, tela cheia e avanço automático para o próximo episódio.
+- **Tela flutuante (Picture-in-Picture)**: botão próprio durante a reprodução, controles Play/Pause integrados ao Android/navegador via Media Session e tentativa automática ao minimizar quando o ambiente permite. O sistema operacional controla posicionamento e redimensionamento (incluindo gesto de pinça nos dispositivos compatíveis).
 - **Continuar Assistindo**: salva exatamente o segundo onde você parou em filmes e episódios (e os últimos canais abertos).
 - **Minha Lista (Favoritos)**: adicione ou remova canais, filmes e séries segurando o botão **OK** no controle (ou toque longo no celular).
 - **Busca instantânea**: pesquisa sem diferenciar maiúsculas ou acentos em milhares de canais, filmes e séries.
@@ -83,3 +84,13 @@ Para usar listas e canais `http://` sem qualquer bloqueio:
 - **No Celular (Android / Chrome)**: abra o link do seu GitHub Pages, toque no menu `⋮` do navegador e selecione **Adicionar à tela inicial / Instalar aplicativo**.
 - **No iPhone / iPad (Safari)**: abra o link, toque em **Compartilhar** e depois em **Adicionar à Tela de Início**.
 - **No Amazon Fire TV Stick**: abra o navegador **Amazon Silk** (ou crie um atalho com *Web App Tester* / *Bookmarker*), acesse o link do seu GitHub Pages e navegue normalmente com as setas e o botão **OK** do controle remoto.
+
+---
+
+## Tela flutuante no Android (versão web 1.8.6)
+
+Durante a reprodução, toque no ícone **Tela flutuante** no canto superior do player. Se o navegador permitir Picture-in-Picture, o vídeo continuará numa janela sobre outros aplicativos, com controles nativos de reprodução. O Android gerencia o tamanho e os gestos de pinça, quando compatíveis.
+
+O TurboFlix também registra ações de Media Session para permitir que navegadores compatíveis solicitem PiP automaticamente ao trocar de aba ou minimizar, mas **não há garantia de ativação automática**. A API web normalmente exige interação do usuário. Verifique as permissões de Picture-in-Picture para o navegador no Android.
+
+**Atenção:** os arquivos APK deste repositório não são recompilados por esta alteração. Um aplicativo Android nativo com WebView pode exigir suporte a PiP na Activity/AndroidManifest (incluindo `supportsPictureInPicture` e `setAutoEnterEnabled`) para entrar automaticamente na janela flutuante ao pressionar Home. Sem o projeto-fonte Android e uma nova compilação do APK, este recurso automático não pode ser garantido nesses pacotes.
