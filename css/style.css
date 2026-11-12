@@ -305,6 +305,7 @@ body.no-topbar #topbar, body.playing #topbar { display: none; }
 #player.is-live .p-bar { display: none; }
 .p-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
 .p-btn { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; color: #fff; }
+.p-btn[hidden] { display: none !important; }
 .p-btn svg { width: 26px; height: 26px; }
 .p-btn.p-main { width: 56px; height: 56px; background: rgba(155,77,255,.5); }
 .p-btn.p-main svg { width: 32px; height: 32px; }
@@ -379,6 +380,7 @@ button, summary { touch-action: manipulation; }
   .p-btn { flex-shrink: 0; }
   .p-time { font-size: 12px; }
   .p-top { gap: 6px; }
+  .p-top .p-btn { width: 40px; height: 40px; }
   .p-top .badge-live { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
