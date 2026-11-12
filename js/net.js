@@ -1,7 +1,7 @@
 // Rede: requisições diretas, espelho real do servidor (server_info.url),
 // resolução DNS-over-HTTPS automática (contra bloqueio de DNS da operadora)
 // e suporte opcional a Proxy HTTPS (Cloudflare Worker com conversão automática de IP bruto para .sslip.io).
-import { Store } from './storage.js?v=1.8.9';
+import { Store } from './storage.js?v=1.8.10';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -180,6 +180,45 @@ export function imgUrl(u) {
     }
   } catch { /* utiliza o caminho restrito existente */ }
   return proxify(source);
+}
+
+
+/**
+ * Retorna apenas alternativas HTTPS de imagem. Nunca encaminha URLs de
+ * acesso, com tokens ou da origem IPTV para um serviço público de terceiros.
+ */
+export function imageCandidates(raw) {
+  if (!raw) return [];
+  const source = String(raw).trim();
+  const main = imgUrl(source);
+  const result = [main];
+  try {
+    const u = new URL(source);
+    if (!['http:','https:'].includes(u.protocol)) return result.filter(Boolean);
+    const cfg = Store.cfg || {};
+    const origin = new URL(cfg.server || cfg.url || location.href);
+    const host = u.hostname.toLowerCase();
+    if (host === origin.hostname.toLowerCase() || u.username || u.password) {
+      // Origem IPTV pode conter usuário/senha na URL ou no caminho.
+      return result.filter(Boolean);
+    }
+    const privateHost = /^(?:localhost|.*\.localhost|.*\.local|.*\.internal)$/i.test(host)
+      || /^(\d{1,3}\.){3}\d{1,3}$/.test(host);
+    const safeParams = [...u.searchParams.keys()].every(k =>
+      ['w','h','width','height','q','quality','fit','crop','format','auto','size','dpr'].includes(k.toLowerCase()));
+    const sensitivePath = /(?:\/live\/|\/movie\/|\/series\/|\/get\.php|\/player_api\.php|\/api\/)/i.test(u.pathname);
+    if (privateHost || !safeParams || sensitivePath) return result.filter(Boolean);
+    const publicProxy = 'https://wsrv.nl/?url=' + encodeURIComponent(source) + '&default=1';
+    if (!result.includes(publicProxy)) result.push(publicProxy);
+    if (u.protocol === 'http:' && (!u.port || u.port === '80')) {
+      // Alguns CDNs aceitam a mesma imagem por HTTPS, sem proxy externo.
+      const secure = new URL(source);
+      secure.protocol = 'https:';
+      secure.port = '';
+      if (!result.includes(secure.toString())) result.push(secure.toString());
+    }
+  } catch {}
+  return [...new Set(result.filter(Boolean))];
 }
 
 async function fetchWithTimeout(url, ms) {

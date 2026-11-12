@@ -3,21 +3,21 @@
 // 2. Faz ponte de streaming local (/__stream__?url=...) para vídeos MP4/MKV http://
 //    quando o app roda em https:// (GitHub Pages), evitando que o elemento <video>
 //    do navegador bloqueie IPs http:// ou force upgrade para https://.
-const VERSION = 'turboflix-v1.8.9';
+const VERSION = 'turboflix-v1.8.10';
 const SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
-  './css/style.css?v=1.8.9',
-  './js/app.js?v=1.8.9',
-  './js/storage.js?v=1.8.9',
-  './js/net.js?v=1.8.9',
-  './js/m3u.js?v=1.8.9',
-  './js/xtream.js?v=1.8.9',
-  './js/nav.js?v=1.8.9',
-  './js/player.js?v=1.8.9',
-  './js/pip.js?v=1.8.9',
-  './js/icons.js?v=1.8.9',
+  './css/style.css?v=1.8.10',
+  './js/app.js?v=1.8.10',
+  './js/storage.js?v=1.8.10',
+  './js/net.js?v=1.8.10',
+  './js/m3u.js?v=1.8.10',
+  './js/xtream.js?v=1.8.10',
+  './js/nav.js?v=1.8.10',
+  './js/player.js?v=1.8.10',
+  './js/pip.js?v=1.8.10',
+  './js/icons.js?v=1.8.10',
   './js/vendor/hls.min.js',
   './js/vendor/mpegts.js',
   './proxy/cloudflare-worker.js',

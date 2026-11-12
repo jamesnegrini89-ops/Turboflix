@@ -1,13 +1,13 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
-import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.9';
-import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.9';
-import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.9';
-import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.9';
-import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.9';
-import { Player } from './player.js?v=1.8.9';
-import { icon, hydrateIcons } from './icons.js?v=1.8.9';
+import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.10';
+import { esc, imgUrl, imageCandidates, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.10';
+import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.10';
+import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.10';
+import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.10';
+import { Player } from './player.js?v=1.8.10';
+import { icon, hydrateIcons } from './icons.js?v=1.8.10';
 
-const APP_VERSION = '1.8.9';
+const APP_VERSION = '1.8.10';
 const $ = (s, r = document) => r.querySelector(s);
 const view = $('#view');
 
@@ -100,6 +100,9 @@ function setData(d) {
   coverQueue.length = 0;
   coverAttempted.clear();
   coverRequestCount = 0;
+  recoveredArtworkCount = 0;
+  brokenArtworkItems.clear();
+  imageErrorHosts.clear();
 }
 
 function lookup(id) {
@@ -123,12 +126,50 @@ const coverAttempted = new Set();
 let coverObserver = null;
 let coverRequestActive = false;
 let coverRequestCount = 0;
-const MAX_COVER_REQUESTS = 24;
+const MAX_COVER_REQUESTS = 96;
+const brokenArtworkItems = new Set();
+const imageErrorHosts = new Map();
+let recoveredArtworkCount = 0;
+
+function artworkTag(raw, extra = '') {
+  const value = String(raw || '').trim();
+  return value
+    ? `<img loading="lazy" decoding="async" src="${esc(imgUrl(value))}" data-artwork-raw="${esc(value)}" ${extra} alt="">`
+    : '';
+}
+function artworkDiagnostics() {
+  const catalog = DATA || { live: [], movies: [], series: [] };
+  const all = [...catalog.live, ...catalog.movies, ...catalog.series];
+  return {
+    total: all.length,
+    withUrl: all.filter(i => Boolean(i.logo)).length,
+    withoutUrl: all.filter(i => !i.logo).length,
+    broken: brokenArtworkItems.size,
+    recovered: recoveredArtworkCount,
+    hosts: [...imageErrorHosts].sort((a,b) => b[1]-a[1]).slice(0,5)
+  };
+}
+function copyArtworkDiagnostics() {
+  const d=artworkDiagnostics();
+  return [
+    'TurboFlix: diagnóstico de imagens (sem links nem credenciais)',
+    'Versão: 1.8.10',
+    'Origem: ' + (Store.cfg?.type || 'desconhecida'),
+    'Itens: ' + d.total,
+    'Com URL de imagem: ' + d.withUrl,
+    'Sem URL de imagem: ' + d.withoutUrl,
+    'Falhas definitivas de imagem: ' + d.broken,
+    'Capas recuperadas pelo catálogo detalhado: ' + d.recovered,
+    'Domínios de imagens com erro: ' + d.hosts.map(([h,n]) => h+' ('+n+')').join(', ')
+  ].join('\n');
+}
+
 
 function updateRecoveredCover(item, url) {
   const next = typeof url === 'string' ? url.trim() : '';
-  if (!next || next === item.logo) return false;
+  if (!/^https?:\/\//i.test(next) || next === item.logo) return false;
   item.logo = next;
+  recoveredArtworkCount++;
   for (const card of document.querySelectorAll('.card[data-id]')) {
     if (card.dataset.id !== item.id) continue;
     const thumb = card.querySelector('.thumb');
@@ -139,7 +180,10 @@ function updateRecoveredCover(item, url) {
       img.loading = 'lazy'; img.decoding = 'async'; img.alt = '';
       thumb.appendChild(img);
     }
+    img.dataset.artworkRaw = next;
+    img.dataset.artworkAttempt = '0';
     img.classList.remove('broken');
+    brokenArtworkItems.delete(item.id);
     img.src = imgUrl(next);
   }
   return true;
@@ -169,7 +213,7 @@ async function drainCoverQueue() {
           updateRecoveredCover(item, alternate);
         }
       } catch { /* servidor pode não disponibilizar capas adicionais */ }
-      if (coverQueue.length) await new Promise((done) => setTimeout(done, 650));
+      if (coverQueue.length) await new Promise((done) => setTimeout(done, 900));
     }
   } finally { coverRequestActive = false; }
 }
@@ -195,7 +239,7 @@ function card(item, opts = {}) {
   REG.set(item.id, item);
   const live = item.type === 'live';
   const pct = opts.progress;
-  const img = item.logo ? `<img loading="lazy" decoding="async" src="${esc(imgUrl(item.logo))}" alt="">` : '';
+  const img = artworkTag(item.logo);
   const sub = opts.sub ? `<div class="csub">${esc(opts.sub)}</div>` : '';
   return `<button class="card focusable ${live ? 'card-live' : 'card-poster'} ${FAVSET.has(item.id) ? 'is-fav' : ''}"
     data-act="${opts.act || 'open'}" data-id="${esc(item.id)}" data-list="${opts.list || ''}">
@@ -373,7 +417,7 @@ function renderMatchCards(sportsList) {
     }
     return `<button class="match-card single focusable" data-act="open" data-id="${esc(it.id)}" data-list="sports">
       <div class="match-comp">${icon('sports')}<span>${esc(comp)}</span></div>
-      <div class="match-team"><span class="crest">${it.logo ? `<img loading="lazy" src="${esc(imgUrl(it.logo))}" alt="">` : esc(initials(a))}</span><b>${esc(a)}</b></div>
+      <div class="match-team"><span class="crest">${esc(initials(a))}${artworkTag(it.logo)}</span><b>${esc(a)}</b></div>
       <div class="match-mid"><em class="live-pill">${esc(status)}</em></div>
     </button>`;
   });
@@ -511,7 +555,7 @@ async function renderMovie(id) {
     <div class="detail">
       <div class="backdrop" id="bd" data-bg="${esc(it.logo || '')}"></div>
       <div class="detail-body">
-        <div class="poster"><span class="ph">${esc(initials(it.name))}</span>${it.logo ? `<img src="${esc(imgUrl(it.logo))}" alt="">` : ''}</div>
+        <div class="poster"><span class="ph">${esc(initials(it.name))}</span>${artworkTag(it.logo)}</div>
         <div class="info">
           <h1>${esc(it.name)}</h1>
           <div class="meta" id="meta"><span>${esc(it.group || '')}</span>${it.rating ? `<span>★ ${esc(it.rating)}</span>` : ''}</div>
@@ -534,9 +578,9 @@ async function renderMovie(id) {
       if (alternateCover && (!it.logo || !posterImg || posterImg.classList.contains('broken'))) {
         updateRecoveredCover(it, alternateCover);
         if (detailPoster) {
-          if (posterImg) { posterImg.classList.remove('broken'); posterImg.src = imgUrl(alternateCover); }
+          if (posterImg) { posterImg.classList.remove('broken'); posterImg.dataset.artworkRaw = alternateCover; posterImg.dataset.artworkAttempt = '0'; posterImg.src = imgUrl(alternateCover); }
           else {
-            const added = document.createElement('img'); added.alt = ''; added.src = imgUrl(alternateCover);
+            const added = document.createElement('img'); added.alt = ''; added.dataset.artworkRaw = alternateCover; added.src = imgUrl(alternateCover);
             detailPoster.appendChild(added);
           }
         }
@@ -562,7 +606,7 @@ async function renderSeries(id) {
     <div class="detail series">
       <div class="backdrop" id="bd" data-bg="${esc(it.logo || '')}"></div>
       <div class="detail-body">
-        <div class="poster"><span class="ph">${esc(initials(it.name))}</span>${it.logo ? `<img src="${esc(imgUrl(it.logo))}" alt="">` : ''}</div>
+        <div class="poster"><span class="ph">${esc(initials(it.name))}</span>${artworkTag(it.logo)}</div>
         <div class="info">
           <h1>${esc(it.name)}</h1>
           <div class="meta" id="meta"><span>${esc(it.group || '')}</span>${it.year ? `<span>${esc(it.year)}</span>` : ''}${it.rating ? `<span>★ ${esc(it.rating)}</span>` : ''}</div>
@@ -631,7 +675,7 @@ function renderEpisodes(seriesId) {
   $('#episodes').innerHTML = list.map((e) => {
     const p = pm[e.id];
     return `<button class="ep focusable" data-act="ep" data-id="${esc(e.id)}">
-      <div class="ep-thumb"><span class="ph">E${e.episode}</span>${e.logo ? `<img loading="lazy" src="${esc(imgUrl(e.logo))}" alt="">` : ''}${icon('play', 'ep-play')}
+      <div class="ep-thumb"><span class="ph">E${e.episode}</span>${artworkTag(e.logo)}${icon('play', 'ep-play')}
         ${p ? `<div class="prog"><i style="width:${progressPct(p)}%"></i></div>` : ''}</div>
       <div class="ep-info"><b>${e.episode}. ${esc(e.name)}</b>${e.duration ? `<small>${esc(e.duration)}</small>` : ''}<p>${esc(e.plot || '')}</p></div>
     </button>`;
@@ -719,6 +763,15 @@ function renderSettings() {
         <div class="actions">
           <button class="btn primary focusable" data-act="reload">${icon('refresh')} Recarregar lista</button>
           <button class="btn focusable" data-act="logout">${icon('logout')} Trocar lista / sair</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>${icon('film')} Diagnóstico das imagens</h3>
+        <p class="dim">As capas dependem de endereços fornecidos pelo servidor IPTV ou por provedores de imagens externos.</p>
+        <p class="dim">${fmtN(artworkDiagnostics().withoutUrl)} itens sem endereço de capa no catálogo; ${fmtN(artworkDiagnostics().broken)} com imagem indisponível neste dispositivo; ${fmtN(artworkDiagnostics().recovered)} recuperados pela consulta detalhada.</p>
+        <div class="actions">
+          <button class="btn focusable" data-act="copyartdiag">Copiar diagnóstico sem credenciais</button>
         </div>
       </div>
 
@@ -957,13 +1010,20 @@ async function handleAction(el) {
     }
     case 'copyworker': {
       try {
-        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.9', { cache: 'no-store' });
+        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.10', { cache: 'no-store' });
         const code = await r.text();
         await navigator.clipboard.writeText(code);
         toast('✔ Código do Worker v1.8.1 copiado! Cole no seu Worker da Cloudflare e clique em Deploy.');
       } catch {
         window.open('proxy/cloudflare-worker.js', '_blank');
       }
+      break;
+    }
+    case 'copyartdiag': {
+      try {
+        await navigator.clipboard.writeText(copyArtworkDiagnostics());
+        toast('Diagnóstico copiado, sem endereço completo da lista nem senhas.', 4000);
+      } catch { toast('Não foi possível copiar o diagnóstico.'); }
       break;
     }
     case 'clearprog': Store.clearProgress(); toast('Continuar Assistindo limpo'); break;
@@ -1036,9 +1096,22 @@ function initEvents() {
   document.addEventListener('error', (e) => {
     const img = e.target;
     if (img.tagName !== 'IMG') return;
+    const raw = img.dataset.artworkRaw || '';
+    const candidates = imageCandidates(raw);
+    const nextAttempt = Number(img.dataset.artworkAttempt || 0) + 1;
+    if (raw && nextAttempt < candidates.length) {
+      img.dataset.artworkAttempt = String(nextAttempt);
+      img.src = candidates[nextAttempt];
+      return;
+    }
     img.classList.add('broken');
+    try {
+      const host = new URL(raw).hostname.toLowerCase();
+      if (host) imageErrorHosts.set(host,(imageErrorHosts.get(host)||0)+1);
+    } catch {}
     const card = img.closest('.card[data-id]');
     if (card) {
+      brokenArtworkItems.add(card.dataset.id);
       const item = lookup(card.dataset.id);
       if (item) queueCoverRecovery(item);
     }
@@ -1078,7 +1151,7 @@ function boot() {
   Player.init({ resolve: resolveUrls });
   startClock();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js?v=1.8.9', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=1.8.10', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
   if (!location.hash) location.replace(Store.cfg ? '#/home' : '#/login');
   else route();
