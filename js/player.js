@@ -4,12 +4,14 @@
 // - Ponte de streaming local via Service Worker (/__stream__) + suporte a Cloudflare Worker v1.8.1 (.sslip.io)
 //   para filmes/séries MP4/MKV http:// em páginas https:// (Desktop e Chrome Android)
 // - Transmissão DLNA (UPnP AVTransport SetAVTransportURI + Play), Cast Nativo / AirPlay e VLC / Web Video Caster
-import { Store } from './storage.js?v=1.8.5';
-import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.8.5';
-import { icon } from './icons.js?v=1.8.5';
+import { Store } from './storage.js?v=1.8.6';
+import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.8.6';
+import { icon } from './icons.js?v=1.8.6';
+import { initPictureInPicture } from './pip.js?v=1.8.6';
 
 const $ = (id) => document.getElementById(id);
 let el, video, overlay, castModal, hls = null, mts = null, S = null, hideTimer = null, stallTimer = null, lastSave = 0;
+let pipControls = null;
 let resolveUrls = (item) => (item.url ? [item.url] : []);
 let onChange = () => {};
 
@@ -174,7 +176,7 @@ async function ensureSwBridge() {
       swBridgeReady = true;
       return true;
     }
-    const reg = await navigator.serviceWorker.register('sw.js?v=1.8.5', { updateViaCache: 'none' });
+    const reg = await navigator.serviceWorker.register('sw.js?v=1.8.6', { updateViaCache: 'none' });
     await reg.update().catch(() => {});
     await Promise.race([
       navigator.serviceWorker.ready,
@@ -818,6 +820,7 @@ async function start(item, opts = {}) {
   closeCastModal();
   const startToken = Math.random();
   S = { item, list: opts.list || [], start: opts.start || 0, cands: [], ci: 0, started: false, startToken, openedAt: Date.now() };
+  pipControls?.updateItem();
   const live = item.type === 'live';
   $('p-title').textContent = item.name;
   $('p-sub').textContent = item.seriesName ? item.seriesName : (item.group || '');
@@ -853,6 +856,14 @@ export const Player = {
     onChange = opts.onChange || onChange;
     el = $('player'); video = $('video'); overlay = $('p-overlay'); castModal = $('p-cast-modal');
     el.querySelectorAll('[data-icon]').forEach((b) => (b.innerHTML = icon(b.dataset.icon)));
+    pipControls = initPictureInPicture({
+      video,
+      button: el.querySelector('[data-p="pip"]'),
+      getItem: () => S?.item || null,
+      onNext: () => { if (S) S.item.type === 'live' ? zap(1) : playNextEpisode(1); },
+      onPrevious: () => { if (S) S.item.type === 'live' ? zap(-1) : playNextEpisode(-1); },
+      onSeek: (delta) => seek(delta)
+    });
 
     initStreamBridge();
 
@@ -1032,7 +1043,7 @@ export const Player = {
       else if (a === 'cast') { openCastModal(); }
       else if (a === 'copy-worker') {
         try {
-          const r = await fetch('proxy/cloudflare-worker.js?v=1.8.5', { cache: 'no-store' });
+          const r = await fetch('proxy/cloudflare-worker.js?v=1.8.6', { cache: 'no-store' });
           const code = await r.text();
           await navigator.clipboard.writeText(code);
           b.textContent = '✔ Código Copiado! Cole no seu Worker da Cloudflare';
@@ -1042,6 +1053,7 @@ export const Player = {
       }
       else if (a === 'next') S.item.type === 'live' ? zap(1) : playNextEpisode(1);
       else if (a === 'prev') S.item.type === 'live' ? zap(-1) : playNextEpisode(-1);
+      else if (a === 'pip') { void pipControls?.toggle(); }
       else if (a === 'fs') Player.fullscreen(true);
       showOverlay();
     });
@@ -1110,6 +1122,7 @@ export const Player = {
     closeCastModal();
     save(true);
     S = null;
+    pipControls?.clear();
     teardown();
     clearTimeout(hideTimer);
     clearTimeout($('p-zap')._t);
