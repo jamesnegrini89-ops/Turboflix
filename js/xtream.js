@@ -1,6 +1,6 @@
 // Cliente da API Xtream Codes (player_api.php).
-import { fetchJSON, resolveHostIp, withIpFallback, registerHostMirror } from './net.js?v=1.8.8';
-import { Store } from './storage.js?v=1.8.8';
+import { fetchJSON, resolveHostIp, withIpFallback, registerHostMirror } from './net.js?v=1.8.9';
+import { Store } from './storage.js?v=1.8.9';
 
 export function normServer(s) {
   let v = String(s || '').trim().replace(/\/+$/, '');
@@ -75,7 +75,8 @@ export async function loadXtream(cfg, progress = () => {}) {
   })).sort(sortBy(lo));
 
   const movies = vs.map((s) => ({
-    id: 'm' + s.stream_id, sid: s.stream_id, name: s.name || 'Filme', logo: s.stream_icon || '',
+    id: 'm' + s.stream_id, sid: s.stream_id, name: s.name || 'Filme',
+    logo: s.stream_icon || s.movie_image || s.cover_big || s.cover || '',
     group: vcm[s.category_id] || 'Outros', type: 'movie', ext: s.container_extension || 'mp4',
     rating: s.rating || '', added: +s.added || 0
   })).sort(sortBy(vo));

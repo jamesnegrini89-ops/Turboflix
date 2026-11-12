@@ -4,9 +4,9 @@
 // - Ponte de streaming local via Service Worker (/__stream__) + suporte a Cloudflare Worker v1.8.1 (.sslip.io)
 //   para filmes/séries MP4/MKV http:// em páginas https:// (Desktop e Chrome Android)
 // - Transmissão DLNA (UPnP AVTransport SetAVTransportURI + Play), Cast Nativo / AirPlay e VLC / Web Video Caster
-import { Store } from './storage.js?v=1.8.8';
-import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.8.8';
-import { icon } from './icons.js?v=1.8.8';
+import { Store } from './storage.js?v=1.8.9';
+import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.8.9';
+import { icon } from './icons.js?v=1.8.9';
 
 const $ = (id) => document.getElementById(id);
 let el, video, overlay, castModal, hls = null, mts = null, S = null, hideTimer = null, stallTimer = null, lastSave = 0;
@@ -175,7 +175,7 @@ async function ensureSwBridge() {
       swBridgeReady = true;
       return true;
     }
-    const reg = await navigator.serviceWorker.register('sw.js?v=1.8.8', { updateViaCache: 'none' });
+    const reg = await navigator.serviceWorker.register('sw.js?v=1.8.9', { updateViaCache: 'none' });
     await reg.update().catch(() => {});
     await Promise.race([
       navigator.serviceWorker.ready,
@@ -882,7 +882,7 @@ export const Player = {
     // PiP opcional: falhas na API ou no módulo não impedem a inicialização do player.
     const pipButton = el.querySelector('[data-p="pip"]');
     if (pipButton) pipButton.hidden = true;
-    import('./pip.js?v=1.8.8').then(({ initPictureInPicture }) => {
+    import('./pip.js?v=1.8.9').then(({ initPictureInPicture }) => {
       pipControls = initPictureInPicture({
         video,
         button: pipButton,
@@ -1083,7 +1083,7 @@ export const Player = {
       else if (a === 'cast') { openCastModal(); }
       else if (a === 'copy-worker') {
         try {
-          const r = await fetch('proxy/cloudflare-worker.js?v=1.8.8', { cache: 'no-store' });
+          const r = await fetch('proxy/cloudflare-worker.js?v=1.8.9', { cache: 'no-store' });
           const code = await r.text();
           await navigator.clipboard.writeText(code);
           b.textContent = '✔ Código Copiado! Cole no seu Worker da Cloudflare';

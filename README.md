@@ -87,7 +87,7 @@ Para usar listas e canais `http://` sem qualquer bloqueio:
 
 ---
 
-## Tela flutuante no Android (versão web 1.8.8)
+## Tela flutuante no Android (versão web 1.8.9)
 
 Durante a reprodução, toque no ícone **Tela flutuante** no canto superior do player. Se o navegador permitir Picture-in-Picture, o vídeo continuará numa janela sobre outros aplicativos, com controles nativos de reprodução. O Android gerencia o tamanho e os gestos de pinça, quando compatíveis.
 
@@ -96,14 +96,14 @@ O TurboFlix também registra ações de Media Session para permitir que navegado
 **Atenção:** o APK original 1.8.5 permanece sem PiP nativo. O novo APK Android PiP 1.8.7 tem suporte nativo, sujeito à compatibilidade do dispositivo. Consulte `android/README.md`.
 
 
-## Compatibilidade Chrome 1.8.8
+## Compatibilidade Chrome 1.8.9
 
 As versões de importação dos módulos JavaScript foram unificadas, evitando caches de rede e DNS independentes entre os componentes do app. O Picture-in-Picture é carregado separadamente e não deve impedir a inicialização do player principal. Se a política do Chrome recusar a reprodução automática, o aplicativo oferece o botão **Toque para reproduzir** para tentar novamente a partir de um gesto explícito.
 
 **Importante:** quando um servidor IPTV utiliza HTTP e o aplicativo roda em HTTPS (GitHub Pages), o Chrome pode bloquear conteúdo misto ou CORS. Um proxy HTTPS compatível continua necessário nesses casos. Os dados de acesso IPTV não foram alterados.
 
 
-### Correção de capas e logotipos na versão web 1.8.8
+### Correção de capas e logotipos na versão web 1.8.9
 
 Pôsteres e logotipos HTTP hospedados fora do servidor IPTV não são mais enviados
 ao proxy restrito de reprodução. Para imagens públicas sem parâmetros sensíveis,
@@ -115,3 +115,18 @@ mantêm seus fluxos anteriores.
 O APK Android 1.8.7 funciona como contêiner WebView do site e recebe essa
 atualização no próximo carregamento online; não é preciso reinstalá-lo só
 para alterar o tratamento das imagens.
+
+
+### Capas ausentes e danificadas (versão web 1.8.9)
+
+A nova versão solicita dados de `get_vod_info` apenas para filmes Xtream
+visíveis cujas capas vieram vazias ou falharam ao carregar. As solicitações
+são sequenciais e limitadas a 24 por sessão para reduzir carga e evitar
+interferência com a reprodução. O detalhe de filme também reutiliza a
+consulta que já era feita para recuperar `movie_image`, caso exista.
+
+A contagem **sem capa informada** diferencia imagens ausentes no catálogo
+de falhas de carregamento. A recuperação não é possível quando o servidor
+não fornece uma imagem alternativa ou quando o endereço remoto está indisponível.
+O APK Android PiP 1.8.7 utiliza a versão web atualizada; não requer
+reinstalação para esse ajuste.

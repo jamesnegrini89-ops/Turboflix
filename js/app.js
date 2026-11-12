@@ -1,13 +1,13 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
-import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.8';
-import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.8';
-import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.8';
-import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.8';
-import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.8';
-import { Player } from './player.js?v=1.8.8';
-import { icon, hydrateIcons } from './icons.js?v=1.8.8';
+import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.9';
+import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.9';
+import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.9';
+import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.9';
+import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.9';
+import { Player } from './player.js?v=1.8.9';
+import { icon, hydrateIcons } from './icons.js?v=1.8.9';
 
-const APP_VERSION = '1.8.8';
+const APP_VERSION = '1.8.9';
 const $ = (s, r = document) => r.querySelector(s);
 const view = $('#view');
 
@@ -97,6 +97,9 @@ function setData(d) {
   CATCACHE = {};
   SEARCHIDX = null;
   HOME_RECENT = null;
+  coverQueue.length = 0;
+  coverAttempted.clear();
+  coverRequestCount = 0;
 }
 
 function lookup(id) {
@@ -113,6 +116,81 @@ function resolveUrls(item) {
 
 // ---------------------------------------------------------------- Componentes
 let FAVSET = new Set();
+// Capas ausentes no catálogo Xtream podem existir no endpoint individual
+// get_vod_info. Recuperação sob demanda, apenas para itens visíveis.
+const coverQueue = [];
+const coverAttempted = new Set();
+let coverObserver = null;
+let coverRequestActive = false;
+let coverRequestCount = 0;
+const MAX_COVER_REQUESTS = 24;
+
+function updateRecoveredCover(item, url) {
+  const next = typeof url === 'string' ? url.trim() : '';
+  if (!next || next === item.logo) return false;
+  item.logo = next;
+  for (const card of document.querySelectorAll('.card[data-id]')) {
+    if (card.dataset.id !== item.id) continue;
+    const thumb = card.querySelector('.thumb');
+    if (!thumb) continue;
+    let img = thumb.querySelector('img');
+    if (!img) {
+      img = document.createElement('img');
+      img.loading = 'lazy'; img.decoding = 'async'; img.alt = '';
+      thumb.appendChild(img);
+    }
+    img.classList.remove('broken');
+    img.src = imgUrl(next);
+  }
+  return true;
+}
+function queueCoverRecovery(item) {
+  const cfg = Store.cfg;
+  if (cfg?.type !== 'xtream' || item?.type !== 'movie' || !item.sid) return;
+  if (coverAttempted.has(item.id) || coverRequestCount + coverQueue.length >= MAX_COVER_REQUESTS) return;
+  coverAttempted.add(item.id);
+  coverQueue.push(item);
+  void drainCoverQueue();
+}
+async function drainCoverQueue() {
+  if (coverRequestActive || Player.active) return;
+  coverRequestActive = true;
+  try {
+    while (coverQueue.length && coverRequestCount < MAX_COVER_REQUESTS && !Player.active) {
+      const item = coverQueue.shift();
+      const cfg = Store.cfg;
+      if (cfg?.type !== 'xtream') continue;
+      coverRequestCount++;
+      try {
+        const info = await xtreamVodInfo(cfg, item.sid);
+        // Não aplica a resposta a uma lista de outro login.
+        if (Store.cfg?.server === cfg.server && Store.cfg?.user === cfg.user) {
+          const alternate = info.movie_image || info.cover_big || info.poster || info.stream_icon || info.cover;
+          updateRecoveredCover(item, alternate);
+        }
+      } catch { /* servidor pode não disponibilizar capas adicionais */ }
+      if (coverQueue.length) await new Promise((done) => setTimeout(done, 650));
+    }
+  } finally { coverRequestActive = false; }
+}
+function observeMissingCovers(root = view) {
+  if (Store.cfg?.type !== 'xtream' || !('IntersectionObserver' in window)) return;
+  if (!coverObserver) coverObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      coverObserver.unobserve(entry.target);
+      const item = lookup(entry.target.dataset.id);
+      if (item && !item.logo) queueCoverRecovery(item);
+    }
+  }, { rootMargin: '120px' });
+  for (const el of root.querySelectorAll('.card[data-id]')) {
+    const item = lookup(el.dataset.id);
+    if (item?.type === 'movie' && item.sid && !item.logo && !coverAttempted.has(item.id)) {
+      coverObserver.observe(el);
+    }
+  }
+}
+
 function card(item, opts = {}) {
   REG.set(item.id, item);
   const live = item.type === 'live';
@@ -183,6 +261,7 @@ async function route() {
   }
 
   gridObserver?.disconnect();
+  coverObserver?.disconnect();
   REG.clear(); LISTS.clear();
   FAVSET = new Set(Store.favorites().map((f) => f.id));
   view.scrollTop = 0; window.scrollTo(0, 0);
@@ -202,6 +281,8 @@ async function route() {
   if (revision !== routeRevision) return;
   hydrateIcons(view);
   applyBackgrounds();
+  observeMissingCovers(view);
+  void drainCoverQueue();
   if (!['search', 'login'].includes(name) || name === 'search' && SEARCHSTATE.q) restoreFocus(h);
 }
 
@@ -388,7 +469,9 @@ function fillGrid(key, group) {
   LISTS.set('browse', list);
   view.querySelectorAll('.grp').forEach((b) => b.classList.toggle('sel', b.dataset.g === group));
   $('#bh').textContent = group === '*' ? 'Todos' : group === '@fav' ? 'Minha Lista' : group;
-  $('#bc').textContent = `${fmtN(list.length)} itens`;
+  const missing = key === 'movies' ? list.filter((i) => i.type === 'movie' && !i.logo).length : 0;
+  $('#bc').textContent = `${fmtN(list.length)} itens` +
+    (missing ? ` · ${fmtN(missing)} sem capa informada` : '');
   const grid = $('#grid');
   const bm = view.querySelector('.browse-main');
   if (bm) bm.scrollTop = 0;
@@ -406,6 +489,7 @@ function fillGrid(key, group) {
     const chunk = list.slice(shown, shown + n);
     shown += chunk.length;
     grid.insertAdjacentHTML('beforeend', chunk.map((i) => card(i, { list: 'browse' })).join(''));
+    observeMissingCovers(grid);
     if (shown >= list.length) gridObserver?.disconnect();
   };
   grid._loadMore = more;
@@ -444,6 +528,19 @@ async function renderMovie(id) {
   if (Store.cfg?.type === 'xtream' && it.sid) {
     xtreamVodInfo(Store.cfg, it.sid).then((info) => {
       if (view.dataset.key !== id || view.dataset.view !== 'movie') return;
+      const alternateCover = info.movie_image || info.cover_big || info.poster || info.stream_icon || info.cover;
+      const detailPoster = view.querySelector('.detail .poster');
+      const posterImg = detailPoster?.querySelector('img');
+      if (alternateCover && (!it.logo || !posterImg || posterImg.classList.contains('broken'))) {
+        updateRecoveredCover(it, alternateCover);
+        if (detailPoster) {
+          if (posterImg) { posterImg.classList.remove('broken'); posterImg.src = imgUrl(alternateCover); }
+          else {
+            const added = document.createElement('img'); added.alt = ''; added.src = imgUrl(alternateCover);
+            detailPoster.appendChild(added);
+          }
+        }
+      }
       if (info.plot) $('#plot').textContent = info.plot;
       const meta = [it.group, info.genre, (info.releasedate || '').slice(0, 4), info.duration, info.rating ? '★ ' + info.rating : ''].filter(Boolean);
       $('#meta').innerHTML = meta.map((m) => `<span>${esc(m)}</span>`).join('');
@@ -860,7 +957,7 @@ async function handleAction(el) {
     }
     case 'copyworker': {
       try {
-        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.8', { cache: 'no-store' });
+        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.9', { cache: 'no-store' });
         const code = await r.text();
         await navigator.clipboard.writeText(code);
         toast('✔ Código do Worker v1.8.1 copiado! Cole no seu Worker da Cloudflare e clique em Deploy.');
@@ -937,7 +1034,14 @@ function initEvents() {
 
   // imagens quebradas mostram as iniciais
   document.addEventListener('error', (e) => {
-    if (e.target.tagName === 'IMG') e.target.classList.add('broken');
+    const img = e.target;
+    if (img.tagName !== 'IMG') return;
+    img.classList.add('broken');
+    const card = img.closest('.card[data-id]');
+    if (card) {
+      const item = lookup(card.dataset.id);
+      if (item) queueCoverRecovery(item);
+    }
   }, true);
 
   // memoriza o último item focado de cada tela
@@ -974,7 +1078,7 @@ function boot() {
   Player.init({ resolve: resolveUrls });
   startClock();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js?v=1.8.8', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=1.8.9', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
   if (!location.hash) location.replace(Store.cfg ? '#/home' : '#/login');
   else route();
