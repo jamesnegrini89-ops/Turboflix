@@ -4,10 +4,9 @@
 // - Ponte de streaming local via Service Worker (/__stream__) + suporte a Cloudflare Worker v1.8.1 (.sslip.io)
 //   para filmes/séries MP4/MKV http:// em páginas https:// (Desktop e Chrome Android)
 // - Transmissão DLNA (UPnP AVTransport SetAVTransportURI + Play), Cast Nativo / AirPlay e VLC / Web Video Caster
-import { Store } from './storage.js?v=1.8.6';
-import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.8.6';
-import { icon } from './icons.js?v=1.8.6';
-import { initPictureInPicture } from './pip.js?v=1.8.6';
+import { Store } from './storage.js?v=1.8.7';
+import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.8.7';
+import { icon } from './icons.js?v=1.8.7';
 
 const $ = (id) => document.getElementById(id);
 let el, video, overlay, castModal, hls = null, mts = null, S = null, hideTimer = null, stallTimer = null, lastSave = 0;
@@ -176,7 +175,7 @@ async function ensureSwBridge() {
       swBridgeReady = true;
       return true;
     }
-    const reg = await navigator.serviceWorker.register('sw.js?v=1.8.6', { updateViaCache: 'none' });
+    const reg = await navigator.serviceWorker.register('sw.js?v=1.8.7', { updateViaCache: 'none' });
     await reg.update().catch(() => {});
     await Promise.race([
       navigator.serviceWorker.ready,
@@ -283,6 +282,27 @@ function teardown() {
 }
 
 function spinner(on) { $('p-spinner').hidden = !on; }
+
+// O Chrome pode exigir um novo toque após o carregamento assíncrono dos streams.
+function requestPlayback() {
+  if (!S) return;
+  const token = S.token;
+  const rejected = (error) => {
+    if (!S || S.token !== token) return;
+    if (error?.name === 'NotAllowedError') {
+      S.autoplayBlocked = true;
+      spinner(false);
+      $('p-start').hidden = false;
+      showOverlay();
+    } else if (error?.name !== 'AbortError') {
+      console.warn('Falha ao iniciar reprodução:', error?.name || error?.message || error);
+    }
+  };
+  try {
+    const result = video.play();
+    if (result && typeof result.catch === 'function') result.catch(rejected);
+  } catch (error) { rejected(error); }
+}
 
 function showError(msg) {
   spinner(false);
@@ -660,6 +680,8 @@ async function playCandidate() {
   S.token = Math.random();
   teardown();
   S.retryPending = false;
+  S.autoplayBlocked = false;
+  $('p-start').hidden = true;
   const c = S.cands[S.ci];
   if (!c) { showError('Nenhum link de reprodução disponível.'); return; }
   $('p-error').hidden = true;
@@ -700,7 +722,7 @@ async function playCandidate() {
         // Servidor fechou a conexão do .ts (Connection: close) -> reconecta em vez de "terminar" o canal
         mts.on(mpegts.Events.LOADING_COMPLETE, () => { if (live && S?.token === token) fail('ts:loading_complete'); });
         mts.load();
-        video.play().catch(() => {});
+        requestPlayback();
         return;
       }
       fail('ts não suportado'); return;
@@ -734,17 +756,17 @@ async function playCandidate() {
           });
           hls.loadSource(c.url);
           hls.attachMedia(video);
-          video.play().catch(() => {});
+          requestPlayback();
           return;
         }
       }
-      if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = c.url; video.play().catch(() => {}); return; }
+      if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = c.url; requestPlayback(); return; }
       fail('hls não suportado'); return;
     }
     // Vídeo direto (MP4 / MKV de filmes e séries)
     video.preload = 'auto';
     video.src = c.url;
-    video.play().catch(() => {});
+    requestPlayback();
   } catch (e) { if (S?.token === token) fail(e.message); }
 }
 
@@ -784,7 +806,7 @@ function seek(delta) {
 }
 
 function togglePlay() {
-  if (video.paused || video.readyState < 2) video.play().catch(() => {});
+  if (video.paused || video.readyState < 2) requestPlayback();
   else video.pause();
   showOverlay();
 }
@@ -820,6 +842,7 @@ async function start(item, opts = {}) {
   closeCastModal();
   const startToken = Math.random();
   S = { item, list: opts.list || [], start: opts.start || 0, cands: [], ci: 0, started: false, startToken, openedAt: Date.now() };
+  $('p-start').hidden = true;
   pipControls?.updateItem();
   const live = item.type === 'live';
   $('p-title').textContent = item.name;
@@ -856,13 +879,30 @@ export const Player = {
     onChange = opts.onChange || onChange;
     el = $('player'); video = $('video'); overlay = $('p-overlay'); castModal = $('p-cast-modal');
     el.querySelectorAll('[data-icon]').forEach((b) => (b.innerHTML = icon(b.dataset.icon)));
-    pipControls = initPictureInPicture({
-      video,
-      button: el.querySelector('[data-p="pip"]'),
-      getItem: () => S?.item || null,
-      onNext: () => { if (S) S.item.type === 'live' ? zap(1) : playNextEpisode(1); },
-      onPrevious: () => { if (S) S.item.type === 'live' ? zap(-1) : playNextEpisode(-1); },
-      onSeek: (delta) => seek(delta)
+    // PiP opcional: falhas na API ou no módulo não impedem a inicialização do player.
+    const pipButton = el.querySelector('[data-p="pip"]');
+    if (pipButton) pipButton.hidden = true;
+    import('./pip.js?v=1.8.7').then(({ initPictureInPicture }) => {
+      pipControls = initPictureInPicture({
+        video,
+        button: pipButton,
+        getItem: () => S?.item || null,
+        onNext: () => { if (S) S.item.type === 'live' ? zap(1) : playNextEpisode(1); },
+        onPrevious: () => { if (S) S.item.type === 'live' ? zap(-1) : playNextEpisode(-1); },
+        onSeek: (delta) => seek(delta)
+      });
+      pipControls.updateItem();
+    }).catch((error) => {
+      console.warn('Tela flutuante indisponível; player principal preservado:', error);
+      if (pipButton) pipButton.hidden = true;
+    });
+    $('p-start').addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!S) return;
+      S.autoplayBlocked = false;
+      $('p-start').hidden = true;
+      requestPlayback();
     });
 
     initStreamBridge();
@@ -874,17 +914,17 @@ export const Player = {
     }, 400);
 
     video.addEventListener('playing', () => {
-      spinner(false); clearTimeout(stallTimer); $('p-error').hidden = true; updatePlayIcon(); showOverlay(2500);
+      spinner(false); clearTimeout(stallTimer); $('p-error').hidden = true; $('p-start').hidden = true; updatePlayIcon(); showOverlay(2500);
       if (S) { S.playingOk = true; S.lastProg = Date.now(); }
       if (S && !S.started) { S.started = true; save(true); }
     });
     video.addEventListener('loadeddata', () => {
       spinner(false); clearTimeout(stallTimer);
-      if (S && video.paused) video.play().catch(() => {});
+      if (S && video.paused && !S.autoplayBlocked) requestPlayback();
     });
     video.addEventListener('canplay', () => {
       spinner(false); clearTimeout(stallTimer);
-      if (S && video.paused) video.play().catch(() => {});
+      if (S && video.paused && !S.autoplayBlocked) requestPlayback();
     });
     video.addEventListener('progress', () => {
       if (S && S.item.type !== 'live' && video.readyState < 1 && Date.now() - (S.candStart || 0) < 60000) {
@@ -899,7 +939,7 @@ export const Player = {
       if (S && S.start > 0 && isFinite(video.duration) && S.start < video.duration - 5) {
         video.currentTime = S.start; S.start = 0;
       }
-      if (S && video.paused) video.play().catch(() => {});
+      if (S && video.paused && !S.autoplayBlocked) requestPlayback();
     });
     video.addEventListener('timeupdate', () => {
       if (!S) return;
@@ -1043,7 +1083,7 @@ export const Player = {
       else if (a === 'cast') { openCastModal(); }
       else if (a === 'copy-worker') {
         try {
-          const r = await fetch('proxy/cloudflare-worker.js?v=1.8.6', { cache: 'no-store' });
+          const r = await fetch('proxy/cloudflare-worker.js?v=1.8.7', { cache: 'no-store' });
           const code = await r.text();
           await navigator.clipboard.writeText(code);
           b.textContent = '✔ Código Copiado! Cole no seu Worker da Cloudflare';
@@ -1091,7 +1131,7 @@ export const Player = {
       else if (k === 'Enter' || k === ' ' || k === 'MediaPlayPause' || c === 179 || c === 85 || c === 23) {
         if (!e.repeat && Date.now() - (S.openedAt || 0) > 600) togglePlay();
       }
-      else if (k === 'MediaPlay' || c === 126) { video.play().catch(() => {}); showOverlay(); }
+      else if (k === 'MediaPlay' || c === 126) { requestPlayback(); showOverlay(); }
       else if (k === 'MediaPause' || c === 127) { video.pause(); }
       else if (k === 'ArrowLeft' || c === 37) live ? showOverlay() : seek(-10);
       else if (k === 'ArrowRight' || c === 39) live ? showOverlay() : seek(10);
@@ -1123,6 +1163,7 @@ export const Player = {
     save(true);
     S = null;
     pipControls?.clear();
+    $('p-start').hidden = true;
     teardown();
     clearTimeout(hideTimer);
     clearTimeout($('p-zap')._t);

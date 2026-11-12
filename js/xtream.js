@@ -1,6 +1,6 @@
 // Cliente da API Xtream Codes (player_api.php).
-import { fetchJSON, resolveHostIp, withIpFallback, registerHostMirror } from './net.js?v=1.8.5';
-import { Store } from './storage.js?v=1.8.5';
+import { fetchJSON, resolveHostIp, withIpFallback, registerHostMirror } from './net.js?v=1.8.7';
+import { Store } from './storage.js?v=1.8.7';
 
 export function normServer(s) {
   let v = String(s || '').trim().replace(/\/+$/, '');

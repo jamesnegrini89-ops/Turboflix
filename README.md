@@ -87,10 +87,17 @@ Para usar listas e canais `http://` sem qualquer bloqueio:
 
 ---
 
-## Tela flutuante no Android (versão web 1.8.6)
+## Tela flutuante no Android (versão web 1.8.7)
 
 Durante a reprodução, toque no ícone **Tela flutuante** no canto superior do player. Se o navegador permitir Picture-in-Picture, o vídeo continuará numa janela sobre outros aplicativos, com controles nativos de reprodução. O Android gerencia o tamanho e os gestos de pinça, quando compatíveis.
 
 O TurboFlix também registra ações de Media Session para permitir que navegadores compatíveis solicitem PiP automaticamente ao trocar de aba ou minimizar, mas **não há garantia de ativação automática**. A API web normalmente exige interação do usuário. Verifique as permissões de Picture-in-Picture para o navegador no Android.
 
 **Atenção:** os arquivos APK deste repositório não são recompilados por esta alteração. Um aplicativo Android nativo com WebView pode exigir suporte a PiP na Activity/AndroidManifest (incluindo `supportsPictureInPicture` e `setAutoEnterEnabled`) para entrar automaticamente na janela flutuante ao pressionar Home. Sem o projeto-fonte Android e uma nova compilação do APK, este recurso automático não pode ser garantido nesses pacotes.
+
+
+## Compatibilidade Chrome 1.8.7
+
+As versões de importação dos módulos JavaScript foram unificadas, evitando caches de rede e DNS independentes entre os componentes do app. O Picture-in-Picture é carregado separadamente e não deve impedir a inicialização do player principal. Se a política do Chrome recusar a reprodução automática, o aplicativo oferece o botão **Toque para reproduzir** para tentar novamente a partir de um gesto explícito.
+
+**Importante:** quando um servidor IPTV utiliza HTTP e o aplicativo roda em HTTPS (GitHub Pages), o Chrome pode bloquear conteúdo misto ou CORS. Um proxy HTTPS compatível continua necessário nesses casos. Os dados de acesso IPTV não foram alterados.
