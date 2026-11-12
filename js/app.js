@@ -1,13 +1,14 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
-import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.10';
-import { esc, imgUrl, imageCandidates, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.10';
-import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.10';
-import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.10';
-import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.10';
-import { Player } from './player.js?v=1.8.10';
-import { icon, hydrateIcons } from './icons.js?v=1.8.10';
+import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.11';
+import { esc, imgUrl, imageCandidates, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.11';
+import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.11';
+import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.11';
+import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.11';
+import { Player } from './player.js?v=1.8.11';
+import { icon, hydrateIcons } from './icons.js?v=1.8.11';
+import { paintHomeCategories, resetHubArtworkCache } from './hub-art.js?v=1.8.11';
 
-const APP_VERSION = '1.8.10';
+const APP_VERSION = '1.8.11';
 const $ = (s, r = document) => r.querySelector(s);
 const view = $('#view');
 
@@ -97,6 +98,7 @@ function setData(d) {
   CATCACHE = {};
   SEARCHIDX = null;
   HOME_RECENT = null;
+  resetHubArtworkCache();
   coverQueue.length = 0;
   coverAttempted.clear();
   coverRequestCount = 0;
@@ -153,7 +155,7 @@ function copyArtworkDiagnostics() {
   const d=artworkDiagnostics();
   return [
     'TurboFlix: diagnóstico de imagens (sem links nem credenciais)',
-    'Versão: 1.8.10',
+    'Versão: 1.8.11',
     'Origem: ' + (Store.cfg?.type || 'desconhecida'),
     'Itens: ' + d.total,
     'Com URL de imagem: ' + d.withUrl,
@@ -440,19 +442,12 @@ function renderHome() {
   const sports = catItems('sports').slice(0, 30);
   LISTS.set('cont', cont.map((p) => p.item)); LISTS.set('fav', favs); LISTS.set('sports', sports);
 
-  // imagens de fundo dos cards de categoria (pôsteres da própria lista)
-  const posters = DATA.movies.filter((m) => m.logo);
-  const bgFor = (h, items, i) => {
-    const own = items.filter((x) => x.logo && x.type !== 'live');
-    if (own.length) return own[Math.min(own.length - 1, 3)].logo;
-    return posters[(i * 7) % Math.max(1, posters.length)]?.logo || '';
-  };
-
+  // Imagens recentes válidas serão selecionadas e testadas após renderizar.
   view.innerHTML = `
     <section class="hubs">
       ${hubs.map(({ h, items }, i) => `
         <button class="hub focusable ${h.big ? 'big' : ''}" data-act="go" data-href="#/browse/${h.key}" data-key="${h.key}">
-          <div class="hub-bg" data-bg="${esc(bgFor(h, items, i))}"></div>
+          <div class="hub-bg" data-hub="${h.key}"></div>
           <div class="hub-shade"></div>
           <div class="hub-content">${icon(h.icon)}<b>${esc(h.title)}</b><small>${fmtN(items.length)} ${h.unit}</small><i class="hub-line"></i></div>
         </button>`).join('')}
@@ -469,6 +464,7 @@ function renderHome() {
     ${row('Canais de Esportes', sports.map((i) => card(i, { list: 'sports' })), '#/browse/sports')}
     ${!DATA.live.length && !DATA.movies.length && !DATA.series.length ? `<div class="center-box"><h2>Sua lista está vazia</h2><p class="dim">Nenhum canal, filme ou série encontrado.</p></div>` : ''}
   `;
+  paintHomeCategories(hubs,view);
 }
 
 // ---------------------------------------------------------------- Categoria
@@ -1010,7 +1006,7 @@ async function handleAction(el) {
     }
     case 'copyworker': {
       try {
-        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.10', { cache: 'no-store' });
+        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.11', { cache: 'no-store' });
         const code = await r.text();
         await navigator.clipboard.writeText(code);
         toast('✔ Código do Worker v1.8.1 copiado! Cole no seu Worker da Cloudflare e clique em Deploy.');
@@ -1151,7 +1147,7 @@ function boot() {
   Player.init({ resolve: resolveUrls });
   startClock();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js?v=1.8.10', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=1.8.11', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
   if (!location.hash) location.replace(Store.cfg ? '#/home' : '#/login');
   else route();
