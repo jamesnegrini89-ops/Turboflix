@@ -1,13 +1,13 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
-import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.5';
-import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.5';
-import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.5';
-import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.5';
-import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.5';
-import { Player } from './player.js?v=1.8.5';
-import { icon, hydrateIcons } from './icons.js?v=1.8.5';
+import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.6';
+import { esc, imgUrl, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.6';
+import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.6';
+import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.6';
+import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.6';
+import { Player } from './player.js?v=1.8.6';
+import { icon, hydrateIcons } from './icons.js?v=1.8.6';
 
-const APP_VERSION = '1.8.5';
+const APP_VERSION = '1.8.6';
 const $ = (s, r = document) => r.querySelector(s);
 const view = $('#view');
 
@@ -860,7 +860,7 @@ async function handleAction(el) {
     }
     case 'copyworker': {
       try {
-        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.5', { cache: 'no-store' });
+        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.6', { cache: 'no-store' });
         const code = await r.text();
         await navigator.clipboard.writeText(code);
         toast('✔ Código do Worker v1.8.1 copiado! Cole no seu Worker da Cloudflare e clique em Deploy.');
@@ -974,7 +974,7 @@ function boot() {
   Player.init({ resolve: resolveUrls });
   startClock();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js?v=1.8.5', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=1.8.6', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
   if (!location.hash) location.replace(Store.cfg ? '#/home' : '#/login');
   else route();
