@@ -1,14 +1,15 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
-import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.8.11';
-import { esc, imgUrl, imageCandidates, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.8.11';
-import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.8.11';
-import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.8.11';
-import { initNav, focusFirst, focusEl } from './nav.js?v=1.8.11';
-import { Player } from './player.js?v=1.8.11';
-import { icon, hydrateIcons } from './icons.js?v=1.8.11';
-import { paintHomeCategories, resetHubArtworkCache } from './hub-art.js?v=1.8.11';
+import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.9.0';
+import { esc, imgUrl, imageCandidates, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.9.0';
+import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.9.0';
+import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.9.0';
+import { initNav, focusFirst, focusEl } from './nav.js?v=1.9.0';
+import { Player } from './player.js?v=1.9.0';
+import { icon, hydrateIcons } from './icons.js?v=1.9.0';
+import { paintHomeCategories, resetHubArtworkCache } from './hub-art.js?v=1.9.0';
+import { availableYears, filterCatalog } from './browse-filters.js?v=1.9.0';
 
-const APP_VERSION = '1.8.11';
+const APP_VERSION = '1.9.0';
 const $ = (s, r = document) => r.querySelector(s);
 const view = $('#view');
 
@@ -24,7 +25,8 @@ let installPrompt = null;
 const REG = new Map();      // itens renderizados na tela atual
 const LISTS = new Map();    // listas (para zapear canais / próximo episódio)
 const FOCUSMEM = {};        // último item focado por tela
-const BROWSE = {};          // estado de cada categoria (grupo selecionado)
+const BROWSE = {};          // estado dos filtros em cada categoria
+const BROWSE_POS = new Map(); // posição e quantidade de cartões vistos em cada categoria
 const SERIESSTATE = {};
 const SEARCHSTATE = { q: '', type: 'all' };
 
@@ -96,6 +98,7 @@ function setData(d) {
   for (const i of d.movies) INDEX.set(i.id, i);
   for (const i of d.series) INDEX.set(i.id, i);
   CATCACHE = {};
+  BROWSE_POS.clear();
   SEARCHIDX = null;
   HOME_RECENT = null;
   resetHubArtworkCache();
@@ -155,7 +158,7 @@ function copyArtworkDiagnostics() {
   const d=artworkDiagnostics();
   return [
     'TurboFlix: diagnóstico de imagens (sem links nem credenciais)',
-    'Versão: 1.8.11',
+    'Versão: 1.9.0',
     'Origem: ' + (Store.cfg?.type || 'desconhecida'),
     'Itens: ' + d.total,
     'Com URL de imagem: ' + d.withUrl,
@@ -241,17 +244,24 @@ function card(item, opts = {}) {
   REG.set(item.id, item);
   const live = item.type === 'live';
   const pct = opts.progress;
+  const fav = FAVSET.has(item.id);
   const img = artworkTag(item.logo);
-  const sub = opts.sub ? `<div class="csub">${esc(opts.sub)}</div>` : '';
-  return `<button class="card focusable ${live ? 'card-live' : 'card-poster'} ${FAVSET.has(item.id) ? 'is-fav' : ''}"
-    data-act="${opts.act || 'open'}" data-id="${esc(item.id)}" data-list="${opts.list || ''}">
-    <div class="thumb"><span class="ph">${esc(initials(item.name))}</span>${img}
-      ${live ? '<span class="badge-live sm">AO VIVO</span>' : ''}
-      <span class="fav-badge">${icon('heart')}</span>
-      ${pct !== undefined ? `<div class="prog"><i style="width:${Math.max(3, Math.min(100, pct))}%"></i></div>` : ''}
-    </div>
-    <div class="ctitle">${esc(item.name)}</div>${sub}
-  </button>`;
+  const sub = opts.sub ? '<div class="csub">' + esc(opts.sub) + '</div>' : '';
+  return '<div class="card-wrap ' + (live ? 'card-wrap-live' : '') + '">' +
+    '<button class="card focusable ' + (live ? 'card-live' : 'card-poster') +
+    (fav ? ' is-fav' : '') + '" data-act="' + (opts.act || 'open') +
+    '" data-id="' + esc(item.id) + '" data-list="' + esc(opts.list || '') + '">' +
+    '<div class="thumb"><span class="ph">' + esc(initials(item.name)) + '</span>' + img +
+      (live ? '<span class="badge-live sm">AO VIVO</span>' : '') +
+      (pct !== undefined ? '<div class="prog"><i style="width:' +
+      Math.max(3, Math.min(100, pct)) + '%"></i></div>' : '') +
+    '</div><div class="ctitle">' + esc(item.name) + '</div>' + sub + '</button>' +
+    '<button class="card-quickfav' + (fav ? ' on' : '') +
+    '" type="button" data-act="fav" data-id="' + esc(item.id) +
+    '" aria-pressed="' + String(fav) + '" aria-label="' +
+    esc((fav ? 'Remover dos favoritos: ' : 'Adicionar aos favoritos: ') + item.name) +
+    '" title="' + (fav ? 'Remover dos favoritos' : 'Adicionar aos favoritos') +
+    '">' + icon(fav ? 'heart' : 'heartOutline') + '</button></div>';
 }
 
 function row(title, cards, more) {
@@ -271,10 +281,48 @@ function applyBackgrounds(root = view) {
 }
 
 function setNavActive(h) {
-  document.querySelectorAll('#mainnav .nav-btn').forEach((b) => {
+  document.querySelectorAll('#mainnav .nav-btn, #mobile-nav .mobile-nav-btn').forEach((b) => {
     const r = b.dataset.route;
-    b.classList.toggle('active', h === r || (r === '#/home' && (h === '' || h === '#/' )));
+    const active = h === r || (r === '#/home' && (h === '' || h === '#/'));
+    b.classList.toggle('active', active);
+    if (active) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current');
   });
+}
+
+
+function browseState(key) {
+  return BROWSE[key] || (BROWSE[key] = { group:'*', year:'*', sort:'default', favorites:false });
+}
+function browseSignature(st) {
+  return JSON.stringify([st.group,st.year,st.sort,st.favorites]);
+}
+function rememberBrowsePosition() {
+  if (view.dataset.view !== 'browse' || !view.dataset.key) return;
+  const key=view.dataset.key;
+  const st=browseState(key);
+  const active=document.activeElement;
+  BROWSE_POS.set(key,{
+    signature:browseSignature(st),
+    windowTop:window.scrollY||0,
+    innerTop:view.querySelector('.browse-main')?.scrollTop||0,
+    categoryLeft:view.querySelector('.grp-list')?.scrollLeft||0,
+    loaded:view.querySelectorAll('#grid .card').length,
+    focusId:active?.closest?.('.card')?.dataset.id||FOCUSMEM[location.hash]||''
+  });
+}
+function restoreBrowsePosition(key,saved,revision) {
+  if (!saved || saved.signature!==browseSignature(browseState(key))) return false;
+  requestAnimationFrame(()=>{
+    if (routeRevision!==revision || view.dataset.view!=='browse' || view.dataset.key!==key) return;
+    const focused=saved.focusId && [...view.querySelectorAll('.card')].find(el=>el.dataset.id===saved.focusId);
+    if(focused)focused.focus({preventScroll:true});
+    const main=view.querySelector('.browse-main');
+    if(main)main.scrollTop=saved.innerTop;
+    const groups=view.querySelector('.grp-list');
+    if(groups)groups.scrollLeft=saved.categoryLeft;
+    window.scrollTo(0,saved.windowTop);
+  });
+  return true;
 }
 
 // ---------------------------------------------------------------- Roteador
@@ -290,6 +338,7 @@ async function route() {
   let param;
   try { param = decodeURIComponent(parts.slice(1).join('/')); }
   catch { go('#/home'); return; }
+  if (view.dataset.view === 'browse' && !(name === 'browse' && view.dataset.key === param)) rememberBrowsePosition();
 
   // voltando do player para a mesma tela de categoria: mantém tudo como estava
   if (h === lastHash && name === 'browse' && view.dataset.view === 'browse' && view.dataset.key === param) {
@@ -329,7 +378,8 @@ async function route() {
   applyBackgrounds();
   observeMissingCovers(view);
   void drainCoverQueue();
-  if (!['search', 'login'].includes(name) || name === 'search' && SEARCHSTATE.q) restoreFocus(h);
+  const restored = name === 'browse' && restoreBrowsePosition(param,BROWSE_POS.get(param),revision);
+  if (!restored && (!['search', 'login'].includes(name) || name === 'search' && SEARCHSTATE.q)) restoreFocus(h);
 }
 
 function restoreFocus(h) {
@@ -475,69 +525,116 @@ function groupCounts(items) {
 }
 
 function renderBrowse(key) {
-  const def = catDef(key);
+  const def=catDef(key);
   if (!def) { go('#/home'); return; }
-  const items = catItems(key);
-  const groups = groupCounts(items);
-  const st = BROWSE[key] || (BROWSE[key] = { group: '*' });
-  const favCount = items.filter((i) => FAVSET.has(i.id)).length;
-  view.innerHTML = `
-    <div class="browse">
-      <aside class="groups">
-        <div class="browse-title">${icon(def.icon)}<span>${esc(def.title)}</span></div>
-        <div class="grp-list">
-          <button class="grp focusable" data-act="grp" data-g="*"><span>Todos</span><em>${fmtN(items.length)}</em></button>
-          ${favCount ? `<button class="grp focusable" data-act="grp" data-g="@fav"><span>♥ Minha Lista</span><em>${favCount}</em></button>` : ''}
-          ${groups.map(([g, n]) => `<button class="grp focusable" data-act="grp" data-g="${esc(g)}"><span>${esc(g)}</span><em>${fmtN(n)}</em></button>`).join('')}
-        </div>
-      </aside>
-      <section class="browse-main">
-        <div class="browse-head"><h2 id="bh"></h2><span class="dim" id="bc"></span></div>
-        <div class="grid" id="grid"></div>
-        <div class="more" id="more"></div>
-      </section>
-    </div>`;
-  fillGrid(key, st.group);
+  const items=catItems(key);
+  const groups=groupCounts(items);
+  const st=browseState(key);
+  const years=availableYears(items);
+  const favCount=items.filter(i=>FAVSET.has(i.id)).length;
+  const hasRecent=items.some(i=>Number(i.added)>0);
+  const groupTabs=groups.map(([g,n])=>'<button class="grp focusable" data-act="grp" data-g="'+esc(g)+'"><span>'+esc(g)+'</span><em>'+fmtN(n)+'</em></button>').join('');
+  const groupOptions=groups.map(([g,n])=>'<option value="'+esc(g)+'"'+(st.group===g?' selected':'')+'>'+esc(g)+' ('+fmtN(n)+')</option>').join('');
+  const yearOptions=years.map(y=>'<option value="'+y+'"'+(String(y)===st.year?' selected':'')+'>'+y+'</option>').join('');
+  const sortedOptions=
+    '<option value="default"'+(st.sort==='default'?' selected':'')+'>Ordem da lista</option>'+
+    (hasRecent?'<option value="recent"'+(st.sort==='recent'?' selected':'')+'>Adicionados recentemente</option>':'')+
+    '<option value="az"'+(st.sort==='az'?' selected':'')+'>Título A a Z</option>'+
+    '<option value="za"'+(st.sort==='za'?' selected':'')+'>Título Z a A</option>';
+
+  view.innerHTML =
+    '<div class="browse"><aside class="groups">'+
+    '<div class="browse-title">'+icon(def.icon)+'<span>'+esc(def.title)+'</span></div>'+
+    '<div class="grp-list">'+
+      '<button class="grp focusable" data-act="grp" data-g="*"><span>Todos</span><em>'+fmtN(items.length)+'</em></button>'+
+      (favCount?'<button class="grp focusable" data-act="grp" data-g="@fav"><span>♥ Minha Lista</span><em>'+fmtN(favCount)+'</em></button>':'')+
+      groupTabs+
+    '</div></aside><section class="browse-main">'+
+      '<div class="browse-head"><h2 id="bh"></h2><span class="dim" id="bc"></span></div>'+
+      '<div class="browse-filters" role="group" aria-label="Filtrar e ordenar catálogo">'+
+        '<label class="browse-filter"><span>Gênero / categoria</span>'+
+          '<select class="focusable filter-select" data-browse-filter="group" aria-label="Gênero ou categoria">'+
+            '<option value="*">Todas as categorias</option>'+groupOptions+
+          '</select></label>'+
+        (years.length?'<label class="browse-filter"><span>Ano</span>'+
+          '<select class="focusable filter-select" data-browse-filter="year" aria-label="Ano de lançamento">'+
+            '<option value="*">Todos os anos</option>'+yearOptions+
+          '</select></label>':'')+
+        '<label class="browse-filter"><span>Ordenação</span>'+
+          '<select class="focusable filter-select" data-browse-filter="sort" aria-label="Ordenação">'+sortedOptions+'</select></label>'+
+        '<button type="button" class="browse-fav focusable '+(st.favorites?'on':'')+
+          '" data-act="favonly" aria-pressed="'+String(st.favorites)+'">'+icon('heartOutline')+' Só favoritos</button>'+
+      '</div><div class="grid" id="grid"></div><div class="more" id="more"></div>'+
+    '</section></div>';
+  const saved=BROWSE_POS.get(key);
+  fillGrid(key,undefined,{restore:saved?.signature===browseSignature(st)?saved:null});
 }
 
-let gridObserver = null;
-function fillGrid(key, group) {
-  const st = BROWSE[key];
-  st.group = group;
-  const items = catItems(key);
-  const list = group === '*' ? items : group === '@fav' ? items.filter((i) => FAVSET.has(i.id)) : items.filter((i) => i.group === group);
-  LISTS.set('browse', list);
-  view.querySelectorAll('.grp').forEach((b) => b.classList.toggle('sel', b.dataset.g === group));
-  $('#bh').textContent = group === '*' ? 'Todos' : group === '@fav' ? 'Minha Lista' : group;
-  const missing = key === 'movies' ? list.filter((i) => i.type === 'movie' && !i.logo).length : 0;
-  $('#bc').textContent = `${fmtN(list.length)} itens` +
-    (missing ? ` · ${fmtN(missing)} sem capa informada` : '');
-  const grid = $('#grid');
-  const bm = view.querySelector('.browse-main');
-  if (bm) bm.scrollTop = 0;
-  const liveMostly = list.filter((i) => i.type === 'live').length > list.length / 2;
-  grid.className = 'grid ' + (liveMostly ? 'grid-live' : '');
+let gridObserver=null;
+function fillGrid(key,group,opts={}) {
+  const st=browseState(key);
+  if(group!==undefined) {
+    if(group==='@fav') { st.group='*'; st.favorites=true; }
+    else st.group=group;
+  }
+  const items=catItems(key);
+  const list=filterCatalog(items,st,id=>FAVSET.has(id));
+  LISTS.set('browse',list);
+  view.querySelectorAll('.grp').forEach(b=>{
+    const sel=b.dataset.g==='@fav'
+      ? st.group==='*'&&st.favorites
+      : b.dataset.g===st.group && !(b.dataset.g==='*'&&st.favorites);
+    b.classList.toggle('sel',sel);
+  });
+  view.querySelectorAll('[data-browse-filter]').forEach(sel=>{
+    const field=sel.dataset.browseFilter;
+    sel.value=st[field]||'*';
+  });
+  const fav=view.querySelector('.browse-fav');
+  if(fav) { fav.classList.toggle('on',st.favorites);fav.setAttribute('aria-pressed',String(st.favorites)); }
+  document.getElementById('bh').textContent=st.group==='*'?'Todos':st.group;
+  const missing=list.filter(i=>i.type==='movie'&&!i.logo).length;
+  document.getElementById('bc').textContent=fmtN(list.length)+' itens'+
+    (missing?' · '+fmtN(missing)+' sem capa informada':'');
+  const grid=document.getElementById('grid');
+  const main=view.querySelector('.browse-main');
+  if(opts.resetScroll) {
+    BROWSE_POS.delete(key);
+    if(main)main.scrollTop=0;
+    window.scrollTo(0,0);
+  }
+  grid.className='grid '+(list.filter(i=>i.type==='live').length>list.length/2?'grid-live':'');
   REG.clear();
-  grid.innerHTML = '';
-  let shown = 0;
-  const more = () => {
-    if (!grid.isConnected || shown >= list.length) return;
-    // garante que o item focado anteriormente seja renderizado
-    const memId = FOCUSMEM[location.hash];
-    let n = 120;
-    if (shown === 0 && memId) { const idx = list.findIndex((i) => i.id === memId); if (idx >= n) n = idx + 30; }
-    const chunk = list.slice(shown, shown + n);
-    shown += chunk.length;
-    grid.insertAdjacentHTML('beforeend', chunk.map((i) => card(i, { list: 'browse' })).join(''));
+  grid.innerHTML='';
+  let shown=0;
+  const more=()=>{
+    if(!grid.isConnected||shown>=list.length)return;
+    const memId=FOCUSMEM[location.hash];
+    let n=120;
+    if(shown===0&&memId) {
+      const idx=list.findIndex(i=>i.id===memId);
+      if(idx>=n)n=Math.min(idx+30,1200);
+    }
+    const chunk=list.slice(shown,shown+n);
+    shown+=chunk.length;
+    grid.insertAdjacentHTML('beforeend',chunk.map(i=>card(i,{list:'browse'})).join(''));
     observeMissingCovers(grid);
-    if (shown >= list.length) gridObserver?.disconnect();
+    if(shown>=list.length)gridObserver?.disconnect();
   };
-  grid._loadMore = more;
+  grid._loadMore=more;
   more();
-  if (!list.length) grid.innerHTML = `<p class="dim pad">Nenhum item neste grupo.</p>`;
+  // Restaura os cartões que estavam presentes antes de abrir os detalhes.
+  // O limite protege a memória do celular até termos virtualização de grade.
+  if(opts.restore&&opts.restore.signature===browseSignature(st)) {
+    const target=Math.min(2400,Math.max(shown,opts.restore.loaded||0));
+    while(shown<target&&shown<list.length)more();
+  }
+  if(!list.length)grid.innerHTML='<p class="dim pad">Nenhum item com esses filtros.</p>';
   gridObserver?.disconnect();
-  gridObserver = new IntersectionObserver((ents) => { if (ents.some((e) => e.isIntersecting)) more(); }, { rootMargin: '800px' });
-  if (shown < list.length) gridObserver.observe($('#more'));
+  gridObserver=new IntersectionObserver(ents=>{
+    if(ents.some(e=>e.isIntersecting))more();
+  },{rootMargin:'800px'});
+  if(shown<list.length)gridObserver.observe(document.getElementById('more'));
 }
 
 // ---------------------------------------------------------------- Filme
@@ -936,11 +1033,25 @@ function toggleFav(item) {
   const on = Store.toggleFav(item);
   FAVSET = new Set(Store.favorites().map((f) => f.id));
   document.querySelectorAll(`.card[data-id="${CSS.escape(item.id)}"]`).forEach((c) => c.classList.toggle('is-fav', on));
+  document.querySelectorAll('.card-quickfav[data-id="' + CSS.escape(item.id) + '"]').forEach(btn=>{
+    btn.classList.toggle('on',on);
+    btn.setAttribute('aria-pressed',String(on));
+    btn.setAttribute('aria-label',(on?'Remover dos favoritos: ':'Adicionar aos favoritos: ')+item.name);
+    btn.title=on?'Remover dos favoritos':'Adicionar aos favoritos';
+    btn.innerHTML=icon(on?'heart':'heartOutline');
+  });
   view.querySelectorAll(`.fav-btn[data-id="${CSS.escape(item.id)}"]`).forEach((b) => {
     b.classList.toggle('on', on);
     b.innerHTML = `${icon(on ? 'heart' : 'heartOutline')} <span>${on ? 'Na Minha Lista' : 'Minha Lista'}</span>`;
   });
   toast(on ? `♥ "${item.name}" adicionado à Minha Lista` : `"${item.name}" removido da Minha Lista`);
+  if(view.dataset.view==='browse'&&browseState(view.dataset.key).favorites) {
+    const main=view.querySelector('.browse-main');
+    const top=main?.scrollTop||0, winTop=window.scrollY;
+    fillGrid(view.dataset.key);
+    if(main)main.scrollTop=top;
+    window.scrollTo(0,winTop);
+  }
 }
 
 async function handleAction(el) {
@@ -951,8 +1062,15 @@ async function handleAction(el) {
     case 'resume': openItem(lookup(id), el.dataset.list, true); break;
     case 'go': go(el.dataset.href); break;
     case 'grp': {
-      fillGrid(view.dataset.key, el.dataset.g);
+      fillGrid(view.dataset.key, el.dataset.g,{resetScroll:true});
       hydrateIcons($('#grid'));
+      break;
+    }
+    case 'favonly': {
+      const st=browseState(view.dataset.key);
+      st.favorites=!st.favorites;
+      fillGrid(view.dataset.key,undefined,{resetScroll:true});
+      hydrateIcons(document.getElementById('grid'));
       break;
     }
     case 'play': {
@@ -1006,7 +1124,7 @@ async function handleAction(el) {
     }
     case 'copyworker': {
       try {
-        const r = await fetch('proxy/cloudflare-worker.js?v=1.8.11', { cache: 'no-store' });
+        const r = await fetch('proxy/cloudflare-worker.js?v=1.9.0', { cache: 'no-store' });
         const code = await r.text();
         await navigator.clipboard.writeText(code);
         toast('✔ Código do Worker v1.8.1 copiado! Cole no seu Worker da Cloudflare e clique em Deploy.');
@@ -1036,8 +1154,18 @@ function initEvents() {
     if (Date.now() - lastKeyAct < 350) { e.preventDefault(); return; }
     const el = e.target.closest('[data-act]');
     if (el && (view.contains(el))) { e.preventDefault(); handleAction(el); }
-    const nav = e.target.closest('.nav-btn');
+    const nav = e.target.closest('.nav-btn, .mobile-nav-btn');
     if (nav) go(nav.dataset.route);
+  });
+
+  view.addEventListener('change',e=>{
+    const sel=e.target.closest('[data-browse-filter]');
+    if(!sel||view.dataset.view!=='browse')return;
+    const field=sel.dataset.browseFilter;
+    if(!['group','year','sort'].includes(field))return;
+    browseState(view.dataset.key)[field]=sel.value;
+    fillGrid(view.dataset.key,undefined,{resetScroll:true});
+    hydrateIcons(document.getElementById('grid'));
   });
 
   // toque longo (celular) ou botão direito: favoritar
@@ -1136,6 +1264,7 @@ function startClock() {
 // ---------------------------------------------------------------- Inicialização
 function boot() {
   hydrateIcons(document.getElementById('topbar'));
+  hydrateIcons(document.getElementById('mobile-nav'));
   initEvents();
   initNav({
     onBack: () => {
@@ -1147,7 +1276,7 @@ function boot() {
   Player.init({ resolve: resolveUrls });
   startClock();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js?v=1.8.11', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=1.9.0', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
   if (!location.hash) location.replace(Store.cfg ? '#/home' : '#/login');
   else route();

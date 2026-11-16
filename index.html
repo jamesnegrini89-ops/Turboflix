@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/style.css?v=1.8.11" />
+  <link rel="stylesheet" href="css/style.css?v=1.9.0" />
 
 </head>
 <body>
@@ -31,6 +31,14 @@
     </nav>
     <div class="clock"><div id="clock-time">--:--</div><div id="clock-date"></div></div>
   </header>
+
+  <!-- Navegação para telas estreitas; desktop e TV usam o topo atual. -->
+  <nav id="mobile-nav" aria-label="Navegação principal">
+    <button type="button" class="mobile-nav-btn" data-route="#/home" data-icon="home"><span>Início</span></button>
+    <button type="button" class="mobile-nav-btn" data-route="#/search" data-icon="search"><span>Buscar</span></button>
+    <button type="button" class="mobile-nav-btn" data-route="#/mylist" data-icon="bookmark"><span>Minha Lista</span></button>
+    <button type="button" class="mobile-nav-btn" data-route="#/settings" data-icon="settings"><span>Ajustes</span></button>
+  </nav>
 
   <main id="view"></main>
 
@@ -75,6 +83,6 @@
   <div id="loading" hidden><div class="spinner"></div><div id="loading-msg">Carregando...</div></div>
   <div id="toast" hidden></div>
 
-  <script type="module" src="js/app.js?v=1.8.11"></script>
+  <script type="module" src="js/app.js?v=1.9.0"></script>
 </body>
 </html>

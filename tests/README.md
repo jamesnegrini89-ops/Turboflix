@@ -17,4 +17,7 @@ node tests/player.cjs
 
 `TEST_BASE_URL` altera a origem local; `CHROMIUM_PATH` altera o executável (padrão `/usr/bin/chromium`). Os testes não precisam de conta IPTV: simulam um catálogo de 50 mil itens e geram um vídeo temporário, removido após o teste.
 
-Cobertura: importação Xtream, grade incremental, setas de controle remoto, busca sem acentos e foco após Enter, resposta atrasada de séries, preferência HLS, viewport de 360px, PWA offline, cache restrito à interface, reprodução MP4, troca rápida e fechamento do player. O teste imprime tempo e leituras de layout da navegação; o tempo depende da máquina. Não substitui testes em Fire TV física, Safari/iOS ou reprodução de todos os formatos/codecs do provedor. O APK existente não é recompilado por estes testes; não há projeto Android de compilação neste repositório.
+Cobertura: importação Xtream, grade incremental, setas de controle remoto, busca sem acentos e foco após Enter, resposta atrasada de séries, preferência HLS, viewport de 360px, PWA offline, cache restrito à interface, reprodução MP4, troca rápida e fechamento do player. O teste imprime tempo e leituras de layout da navegação; o tempo depende da máquina. Não substitui testes em Fire TV física, Safari/iOS ou reprodução de todos os formatos/codecs do provedor. O APK não é recompilado por estes testes. O projeto Android com PiP está em `android/` e possui workflow próprio.
+
+
+Fase 1: `node tests/phase1.cjs` verifica filtros combinados, favoritos com um toque, barra inferior e retorno à posição anterior no desktop e celular. O workflow `phase1-ui.yml` executa os testes com um catálogo falso, sem credenciais reais.

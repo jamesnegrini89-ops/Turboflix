@@ -87,7 +87,7 @@ Para usar listas e canais `http://` sem qualquer bloqueio:
 
 ---
 
-## Tela flutuante no Android (versão web 1.8.11)
+## Tela flutuante no Android (versão web 1.9.0)
 
 Durante a reprodução, toque no ícone **Tela flutuante** no canto superior do player. Se o navegador permitir Picture-in-Picture, o vídeo continuará numa janela sobre outros aplicativos, com controles nativos de reprodução. O Android gerencia o tamanho e os gestos de pinça, quando compatíveis.
 
@@ -96,14 +96,14 @@ O TurboFlix também registra ações de Media Session para permitir que navegado
 **Atenção:** o APK original 1.8.5 permanece sem PiP nativo. O novo APK Android PiP 1.8.7 tem suporte nativo, sujeito à compatibilidade do dispositivo. Consulte `android/README.md`.
 
 
-## Compatibilidade Chrome 1.8.11
+## Compatibilidade Chrome 1.9.0
 
 As versões de importação dos módulos JavaScript foram unificadas, evitando caches de rede e DNS independentes entre os componentes do app. O Picture-in-Picture é carregado separadamente e não deve impedir a inicialização do player principal. Se a política do Chrome recusar a reprodução automática, o aplicativo oferece o botão **Toque para reproduzir** para tentar novamente a partir de um gesto explícito.
 
 **Importante:** quando um servidor IPTV utiliza HTTP e o aplicativo roda em HTTPS (GitHub Pages), o Chrome pode bloquear conteúdo misto ou CORS. Um proxy HTTPS compatível continua necessário nesses casos. Os dados de acesso IPTV não foram alterados.
 
 
-### Correção de capas e logotipos na versão web 1.8.11
+### Correção de capas e logotipos na versão web 1.9.0
 
 Pôsteres e logotipos HTTP hospedados fora do servidor IPTV não são mais enviados
 ao proxy restrito de reprodução. Para imagens públicas sem parâmetros sensíveis,
@@ -117,7 +117,7 @@ atualização no próximo carregamento online; não é preciso reinstalá-lo só
 para alterar o tratamento das imagens.
 
 
-### Capas ausentes e danificadas (versão web 1.8.11)
+### Capas ausentes e danificadas (versão web 1.9.0)
 
 A nova versão solicita dados de `get_vod_info` apenas para filmes Xtream
 visíveis cujas capas vieram vazias ou falharam ao carregar. As solicitações
@@ -132,7 +132,7 @@ O APK Android PiP 1.8.7 utiliza a versão web atualizada; não requer
 reinstalação para esse ajuste.
 
 
-### Imagens e diagnóstico 1.8.11
+### Imagens e diagnóstico 1.9.0
 
 O app agora tenta uma fonte HTTPS alternativa para capas e logos públicos,
 sem enviar endereços privados ou com credenciais a terceiros. Logos de esportes
@@ -143,7 +143,7 @@ não ter uma capa válida. **Configurações → Diagnóstico das imagens** most
 quantos itens não têm URL de capa e permite copiar uma síntese sem credenciais.
 
 
-### Capas de destaque da página inicial (web 1.8.11)
+### Capas de destaque da página inicial (web 1.9.0)
 
 Os cartões grandes de Filmes, Séries, Infantil, TV ao Vivo, Animes,
 Esportes e Novelas agora utilizam imagens da própria categoria, não
@@ -155,3 +155,16 @@ As tentativas são limitadas a 18 fontes por categoria, com no máximo
 três verificações paralelas por grupo, sem modificar Worker ou player.
 O APK Android PiP 1.8.7 carrega essa versão web automaticamente ao abrir
 com conexão, sem necessidade de reinstalação.
+
+## Fase 1 de navegação (web 1.9.0)
+
+- **Celular:** barra inferior fixa com Início, Buscar, Minha Lista e Ajustes. Esconde-se no login e durante a reprodução.
+- **Catálogo:** filtro por gênero/categoria, ano de lançamento (quando há dados), ordem alfabética, data de inclusão (quando há dados) e Só favoritos. Filtros podem ser combinados.
+- **Favoritos:** botão separado em cada cartão, sem abrir detalhes. Controle remoto continua permitindo segurar OK ou usar Menu.
+- **Voltar ao catálogo:** preserva categoria, filtros, posição de rolagem e número de cartões carregados ao retornar dos detalhes. Recria no máximo 2.400 cartões para proteger a memória.
+- **Desktop/Fire TV:** navegação superior e suporte ao teclado/controle preservados.
+- **Player e Cloudflare Worker:** não foram alterados nesta fase.
+
+O APK Android PiP 1.8.7 carrega a interface web 1.9.0 quando está conectado à internet. Não é necessário recompilar o APK para essas alterações de interface.
+
+Testes: `tests/phase1.cjs` e workflow `.github/workflows/phase1-ui.yml`.

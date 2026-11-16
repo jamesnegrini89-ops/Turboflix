@@ -1,0 +1,56 @@
+name: TurboFlix UI phase 1 checks
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'phase1/**']
+    paths:
+      - '.github/workflows/phase1-ui.yml'
+      - 'index.html'
+      - 'js/**'
+      - 'css/**'
+      - 'sw.js'
+      - 'tests/**'
+
+permissions:
+  contents: read
+
+jobs:
+  browser-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.56.0
+      - name: Find Chromium
+        run: |
+          if command -v chromium >/dev/null 2>&1; then
+            echo "CHROMIUM_PATH=$(command -v chromium)" >> "$GITHUB_ENV"
+          elif command -v google-chrome >/dev/null 2>&1; then
+            echo "CHROMIUM_PATH=$(command -v google-chrome)" >> "$GITHUB_ENV"
+          else
+            npx playwright install --with-deps chromium
+            echo "CHROMIUM_PATH=$(node -e "console.log(require('playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
+          fi
+      - name: Start local fixture site
+        run: |
+          python3 -m http.server 8000 --bind 127.0.0.1 >/tmp/tf-http.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:8000/ >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/tf-http.log
+          exit 1
+      - name: Phase 1 browser tests
+        run: node tests/phase1.cjs
+      - name: Existing browser regressions
+        run: node tests/browser.cjs
+      - name: Media player regressions
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+          fi
+          node tests/player.cjs
