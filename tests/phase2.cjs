@@ -79,7 +79,8 @@ function unitSearch() {
     await p.keyboard.press('/');
     await p.waitForURL('**/#/search');
     await p.locator('#q').waitFor();
-    assert.equal(await p.locator('#q').evaluate(el=>document.activeElement===el),true);
+    await p.waitForFunction(()=>document.activeElement===document.querySelector('#q'));
+
     await p.locator('#q').fill('filme 2');
     await p.locator('.search-suggestion').first().waitFor();
     assert.ok(await p.locator('.search-suggestion').count()>0);
