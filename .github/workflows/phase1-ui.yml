@@ -1,8 +1,8 @@
-name: TurboFlix UI phase 1 checks
+name: TurboFlix UI regression checks
 on:
   workflow_dispatch:
   push:
-    branches: [main, 'phase1/**']
+    branches: [main, 'phase1/**', 'phase2/**']
     paths:
       - '.github/workflows/phase1-ui.yml'
       - 'index.html'
@@ -46,6 +46,8 @@ jobs:
           exit 1
       - name: Phase 1 browser tests
         run: node tests/phase1.cjs
+      - name: Phase 2 browser tests
+        run: node tests/phase2.cjs
       - name: Existing browser regressions
         run: node tests/browser.cjs
       - name: Media player regressions

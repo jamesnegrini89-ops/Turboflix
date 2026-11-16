@@ -1,15 +1,16 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
-import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.9.0';
-import { esc, imgUrl, imageCandidates, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.9.0';
-import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.9.0';
-import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.9.0';
-import { initNav, focusFirst, focusEl } from './nav.js?v=1.9.0';
-import { Player } from './player.js?v=1.9.0';
-import { icon, hydrateIcons } from './icons.js?v=1.9.0';
-import { paintHomeCategories, resetHubArtworkCache } from './hub-art.js?v=1.9.0';
-import { availableYears, filterCatalog } from './browse-filters.js?v=1.9.0';
+import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.10.0';
+import { esc, imgUrl, imageCandidates, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.10.0';
+import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.10.0';
+import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.10.0';
+import { initNav, focusFirst, focusEl } from './nav.js?v=1.10.0';
+import { Player } from './player.js?v=1.10.0';
+import { icon, hydrateIcons } from './icons.js?v=1.10.0';
+import { paintHomeCategories, resetHubArtworkCache } from './hub-art.js?v=1.10.0';
+import { availableYears, filterCatalog } from './browse-filters.js?v=1.10.0';
+import { findCatalogMatches, recentSearches, rememberSearch } from './search-ui.js?v=1.10.0';
 
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.10.0';
 const $ = (s, r = document) => r.querySelector(s);
 const view = $('#view');
 
@@ -158,7 +159,7 @@ function copyArtworkDiagnostics() {
   const d=artworkDiagnostics();
   return [
     'TurboFlix: diagnóstico de imagens (sem links nem credenciais)',
-    'Versão: 1.9.0',
+    'Versão: 1.10.0',
     'Origem: ' + (Store.cfg?.type || 'desconhecida'),
     'Itens: ' + d.total,
     'Com URL de imagem: ' + d.withUrl,
@@ -264,11 +265,36 @@ function card(item, opts = {}) {
     '">' + icon(fav ? 'heart' : 'heartOutline') + '</button></div>';
 }
 
-function row(title, cards, more) {
-  if (!cards.length) return '';
-  return `<section class="section">
-    <div class="section-head"><h2>${esc(title)}</h2>${more ? `<button class="see-all focusable" data-act="go" data-href="${more}">${icon('chevron')} Ver todos</button>` : ''}</div>
-    <div class="row">${cards.join('')}</div></section>`;
+function carouselArrows() {
+  return '<div class="carousel-arrows" aria-label="Rolar itens da seção">'+
+    '<button type="button" class="carousel-arrow prev focusable" data-act="rowscroll" data-dir="-1"'+
+    ' aria-label="Mostrar itens anteriores">'+icon('chevron')+'</button>'+
+    '<button type="button" class="carousel-arrow next focusable" data-act="rowscroll" data-dir="1"'+
+    ' aria-label="Mostrar próximos itens">'+icon('chevron')+'</button></div>';
+}
+function row(title,cards,more) {
+  if(!cards.length)return '';
+  return '<section class="section carousel-section"><div class="section-head">'+
+    '<h2>'+esc(title)+'</h2><div class="section-actions">'+carouselArrows()+
+    (more?'<button class="see-all focusable" data-act="go" data-href="'+esc(more)+'">'+icon('chevron')+' Ver todos</button>':'')+
+    '</div></div><div class="row" aria-label="'+esc(title)+'">'+cards.join('')+'</div></section>';
+}
+function initCarouselControls(root=view) {
+  for(const section of root.querySelectorAll('.carousel-section')) {
+    const strip=section.querySelector('.row, .hubs');
+    const control=section.querySelector('.carousel-arrows');
+    if(!strip||!control)continue;
+    const update=()=>{
+      const max=strip.scrollWidth-strip.clientWidth;
+      control.hidden=max<=6;
+      const prev=control.querySelector('.prev'),next=control.querySelector('.next');
+      if(prev)prev.disabled=strip.scrollLeft<=4;
+      if(next)next.disabled=strip.scrollLeft>=max-4;
+    };
+    strip.addEventListener('scroll',update,{passive:true});
+    update();
+    requestAnimationFrame(update);
+  }
 }
 
 function progressPct(p) { return p.dur ? (p.pos / p.dur) * 100 : undefined; }
@@ -377,6 +403,7 @@ async function route() {
   hydrateIcons(view);
   applyBackgrounds();
   observeMissingCovers(view);
+  initCarouselControls(view);
   void drainCoverQueue();
   const restored = name === 'browse' && restoreBrowsePosition(param,BROWSE_POS.get(param),revision);
   if (!restored && (!['search', 'login'].includes(name) || name === 'search' && SEARCHSTATE.q)) restoreFocus(h);
@@ -480,40 +507,54 @@ function renderMatchCards(sportsList) {
 }
 
 function renderHome() {
-  const hubs = HUBS.map((h) => ({ h, items: catItems(h.key) }));
-  const cont = Store.continueList();
-  const favs = Store.favorites();
-  const provs = PROVIDERS.filter((p) => catItems(p.key).length);
-  const shownProvs = provs.length ? provs : PROVIDERS.slice(0, 8);
-  const byAdded = (list) => (list.some((i) => i.added) ? [...list].sort((a, b) => (b.added || 0) - (a.added || 0)) : list).slice(0, 30);
-  HOME_RECENT ||= { movies: byAdded(DATA.movies), series: byAdded(DATA.series) };
-  const recentMovies = HOME_RECENT.movies;
-  const recentSeries = HOME_RECENT.series;
-  const sports = catItems('sports').slice(0, 30);
-  LISTS.set('cont', cont.map((p) => p.item)); LISTS.set('fav', favs); LISTS.set('sports', sports);
-
-  // Imagens recentes válidas serão selecionadas e testadas após renderizar.
-  view.innerHTML = `
-    <section class="hubs">
-      ${hubs.map(({ h, items }, i) => `
-        <button class="hub focusable ${h.big ? 'big' : ''}" data-act="go" data-href="#/browse/${h.key}" data-key="${h.key}">
-          <div class="hub-bg" data-hub="${h.key}"></div>
-          <div class="hub-shade"></div>
-          <div class="hub-content">${icon(h.icon)}<b>${esc(h.title)}</b><small>${fmtN(items.length)} ${h.unit}</small><i class="hub-line"></i></div>
-        </button>`).join('')}
-    </section>
-    ${row('Continuar Assistindo', cont.slice(0, 30).map((p) => card(p.item, { list: 'cont', act: 'resume', progress: progressPct(p), sub: p.item.type === 'episode' ? p.item.seriesName : '' })), '#/mylist')}
-    <section class="section">
-      <div class="section-head"><h2>Destaques para Você</h2><button class="see-all focusable" data-act="go" data-href="#/browse/movies">${icon('chevron')} Ver todos</button></div>
-      <div class="row providers">${shownProvs.map((p) => `<button class="prov focusable ${p.cls}" data-act="go" data-href="#/browse/${provs.length ? p.key : 'movies'}" data-key="${p.key}"><span>${esc(p.title)}</span></button>`).join('')}</div>
-    </section>
-    ${renderMatchCards(sports)}
-    ${row('Minha Lista', favs.slice(0, 30).map((i) => card(i, { list: 'fav' })), '#/mylist')}
-    ${row('Filmes adicionados recentemente', recentMovies.map((i) => card(i)), '#/browse/movies')}
-    ${row('Séries em destaque', recentSeries.map((i) => card(i)), '#/browse/series')}
-    ${row('Canais de Esportes', sports.map((i) => card(i, { list: 'sports' })), '#/browse/sports')}
-    ${!DATA.live.length && !DATA.movies.length && !DATA.series.length ? `<div class="center-box"><h2>Sua lista está vazia</h2><p class="dim">Nenhum canal, filme ou série encontrado.</p></div>` : ''}
-  `;
+  const hubs=HUBS.map(h=>({h,items:catItems(h.key)}));
+  const progress=Store.continueList();
+  const watching=progress.filter(p=>p.item?.type!=='live');
+  const recentChannels=progress.filter(p=>p.item?.type==='live').slice(0,20).map(p=>p.item);
+  const favs=Store.favorites();
+  const providers=PROVIDERS.filter(p=>catItems(p.key).length);
+  const recent=(list)=>{
+    const dated=list.some(i=>Number(i.added)>0);
+    return {dated,items:(dated?[...list].sort((a,b)=>(Number(b.added)||0)-(Number(a.added)||0)):list).slice(0,30)};
+  };
+  HOME_RECENT ||= {movies:recent(DATA.movies),series:recent(DATA.series)};
+  const movies=HOME_RECENT.movies;
+  const series=HOME_RECENT.series;
+  const sports=catItems('sports').slice(0,30);
+  LISTS.set('cont',watching.map(p=>p.item));
+  LISTS.set('fav',favs);
+  LISTS.set('sports',sports);
+  LISTS.set('recent-live',recentChannels);
+  const hubCards=hubs.map(({h,items})=>
+    '<button class="hub focusable '+(h.big?'big':'')+'" data-act="go"'+
+    ' data-href="#/browse/'+h.key+'" data-key="'+h.key+'">'+
+    '<div class="hub-bg" data-hub="'+h.key+'"></div><div class="hub-shade"></div>'+
+    '<div class="hub-content">'+icon(h.icon)+'<b>'+esc(h.title)+'</b>'+
+    '<small>'+fmtN(items.length)+' '+h.unit+'</small><i class="hub-line"></i></div></button>').join('');
+  const providerSection=providers.length?
+    '<section class="section carousel-section"><div class="section-head">'+
+    '<h2>Explorar por plataforma</h2><div class="section-actions">'+carouselArrows()+'</div></div>'+
+    '<div class="row providers">'+providers.slice(0,10).map(p=>
+      '<button class="prov focusable '+p.cls+'" data-act="go"'+
+      ' data-href="#/browse/'+p.key+'" data-key="'+p.key+'"><span>'+esc(p.title)+'</span></button>').join('')+
+    '</div></section>':'';
+  view.innerHTML=
+    '<section class="home-categories carousel-section"><div class="section-head">'+
+    '<h2>Explorar categorias</h2><div class="section-actions">'+carouselArrows()+'</div></div>'+
+    '<div class="hubs">'+hubCards+'</div></section>'+
+    row('Continuar assistindo',watching.slice(0,30).map(p=>card(p.item,{
+      list:'cont',act:'resume',progress:progressPct(p),
+      sub:p.item.type==='episode'?p.item.seriesName:''})), '#/mylist')+
+    row('Últimos canais acessados',recentChannels.map(i=>card(i,{list:'recent-live'})),'#/browse/live')+
+    row(movies.dated?'Filmes adicionados recentemente':'Filmes do catálogo',
+      movies.items.map(i=>card(i)),'#/browse/movies')+
+    row(series.dated?'Séries adicionadas recentemente':'Séries do catálogo',
+      series.items.map(i=>card(i)),'#/browse/series')+
+    row('Minha Lista',favs.slice(0,30).map(i=>card(i,{list:'fav'})),'#/mylist')+
+    row('Canais esportivos',sports.map(i=>card(i,{list:'sports'})),'#/browse/sports')+
+    providerSection+
+    (!DATA.live.length&&!DATA.movies.length&&!DATA.series.length?
+      '<div class="center-box"><h2>Sua lista está vazia</h2><p class="dim">Nenhum canal, filme ou série encontrado.</p></div>':'');
   paintHomeCategories(hubs,view);
 }
 
@@ -776,48 +817,85 @@ function renderEpisodes(seriesId) {
 }
 
 // ---------------------------------------------------------------- Busca
+function recordSearch() {
+  const q=String(SEARCHSTATE.q||'').trim();
+  if(norm(q).length<2)return;
+  Store.setSetting('searchHistory',rememberSearch(Store.settings.searchHistory,q));
+}
+
 function renderSearch() {
-  view.innerHTML = `
-    <div class="search">
-      <div class="search-box">${icon('search')}<input id="q" class="focusable" type="search" placeholder="Buscar filmes, séries e canais..." autocomplete="off" enterkeyhint="search" value="${esc(SEARCHSTATE.q)}"></div>
-      <div class="chips">
-        ${[['all', 'Todos'], ['movie', 'Filmes'], ['series', 'Séries'], ['live', 'Canais']].map(([k, t]) => `<button class="chip focusable ${SEARCHSTATE.type === k ? 'sel' : ''}" data-act="stype" data-t="${k}">${t}</button>`).join('')}
-      </div>
-      <div id="results"></div>
-    </div>`;
-  const q = $('#q');
-  q.addEventListener('input', () => {
-    SEARCHSTATE.q = q.value;
+  const chips=[['all','Todos'],['movie','Filmes'],['series','Séries'],['live','Canais']]
+    .map(([k,t])=>'<button class="chip focusable'+(SEARCHSTATE.type===k?' sel':'')+
+      '" data-act="stype" data-t="'+k+'" aria-pressed="'+String(SEARCHSTATE.type===k)+'">'+t+'</button>').join('');
+  view.innerHTML='<div class="search">'+
+    '<div class="search-box">'+icon('search')+
+      '<input id="q" class="focusable" type="search" placeholder="Buscar filmes, séries e canais..."'+
+      ' autocomplete="off" enterkeyhint="search" aria-label="Buscar no catálogo" aria-controls="results"'+
+      ' value="'+esc(SEARCHSTATE.q)+'"></div>'+
+    '<div class="chips">'+chips+'</div><div id="search-history"></div>'+
+    '<div id="search-suggestions"></div><div id="results"></div></div>';
+  const q=$('#q');
+  q.addEventListener('input',()=>{
+    SEARCHSTATE.q=q.value;
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => { if (q.isConnected) doSearch(); }, 200);
+    searchTimer=setTimeout(()=>{if(q.isConnected)doSearch();},200);
   });
-  q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(searchTimer); SEARCHSTATE.q = q.value; doSearch(); q.blur(); focusFirst('#results .card'); } });
+  q.addEventListener('keydown',e=>{
+    if(e.key==='Enter'){
+      e.preventDefault();clearTimeout(searchTimer);
+      SEARCHSTATE.q=q.value;recordSearch();doSearch();q.blur();focusFirst('#results .card');
+    }else if(e.key==='Escape'&&q.value){
+      e.preventDefault();e.stopPropagation();
+      q.value='';SEARCHSTATE.q='';doSearch();
+    }
+  });
   doSearch();
-  if (!SEARCHSTATE.q) setTimeout(() => { if (q.isConnected) q.focus(); }, 50);
+  if(!SEARCHSTATE.q)setTimeout(()=>{if(q.isConnected)q.focus();},50);
 }
 
 function doSearch() {
-  const box = $('#results');
-  if (!box) return;
-  const q = norm(SEARCHSTATE.q).trim();
-  if (q.length < 2) {
-    box.innerHTML = `<div class="center-box small"><p class="dim">Digite pelo menos 2 letras para buscar em ${fmtN(DATA.movies.length)} filmes, ${fmtN(DATA.series.length)} séries e ${fmtN(DATA.live.length)} canais.</p></div>`;
+  const box=$('#results'),recent=$('#search-history'),tips=$('#search-suggestions');
+  if(!box||!recent||!tips||!DATA)return;
+  const q=norm(SEARCHSTATE.q).trim();
+  if(q.length<2){
+    const history=recentSearches(Store.settings.searchHistory);
+    recent.innerHTML=history.length?
+      '<section class="search-assist"><div class="search-assist-head">'+
+      '<h2>Pesquisas recentes</h2>'+
+      '<button class="search-clear focusable" data-act="searchclear">Limpar histórico</button></div>'+
+      '<div class="search-history-list">'+history.map(term=>
+        '<button class="search-history-item focusable" data-act="searchpick" data-query="'+esc(term)+'">'+
+        icon('search')+esc(term)+'</button>').join('')+'</div></section>':'';
+    tips.innerHTML='';
+    box.innerHTML='<div class="center-box small"><p class="dim">Digite pelo menos 2 letras para buscar em '+
+      fmtN(DATA.movies.length)+' filmes, '+fmtN(DATA.series.length)+' séries e '+
+      fmtN(DATA.live.length)+' canais.</p></div>';
     return;
   }
-  if (!SEARCHIDX) SEARCHIDX = all().map((i) => [norm(i.name), i]);
-  const terms = q.split(/\s+/);
-  const res = { movie: [], series: [], live: [] };
-  for (const [n, i] of SEARCHIDX) {
-    if (SEARCHSTATE.type !== 'all' && i.type !== SEARCHSTATE.type) continue;
-    if (terms.every((t) => n.includes(t))) { const a = res[i.type]; if (a && a.length < 120) a.push(i); }
-  }
-  const starts = (a) => a.sort((x, y) => (norm(y.name).startsWith(q) ? 1 : 0) - (norm(x.name).startsWith(q) ? 1 : 0));
+  recent.innerHTML='';
+  if(!SEARCHIDX)SEARCHIDX=all().map(item=>[norm(item.name),item]);
+  const result=findCatalogMatches(SEARCHIDX,q,SEARCHSTATE.type);
+  const names={movie:'Filme',series:'Série',live:'Canal'};
+  tips.innerHTML=result.suggestions.length?
+    '<section class="search-assist"><h2>Sugestões do catálogo</h2><div class="search-suggestions-list">'+
+    result.suggestions.map(item=>
+      '<button class="search-suggestion focusable" data-act="searchpick" data-query="'+esc(item.name)+'">'+
+      '<span class="suggestion-title">'+esc(item.name)+'</span><small>'+names[item.type]+
+      '</small></button>').join('')+'</div></section>':'';
+  const starts=items=>items.sort((a,b)=>
+    (norm(b.name).startsWith(q)?1:0)-(norm(a.name).startsWith(q)?1:0));
   REG.clear();
-  FAVSET = new Set(Store.favorites().map((f) => f.id));
-  LISTS.set('slive', res.live);
-  const sec = (title, list, cls, lname) => list.length ? `<section class="section"><div class="section-head"><h2>${title} <span class="dim">(${list.length})</span></h2></div><div class="grid ${cls}">${starts(list).map((i) => card(i, { list: lname })).join('')}</div></section>` : '';
-  const html = sec('Filmes', res.movie, '', '') + sec('Séries', res.series, '', '') + sec('Canais', res.live, 'grid-live', 'slive');
-  box.innerHTML = html || `<div class="center-box small"><p class="dim">Nada encontrado para "${esc(SEARCHSTATE.q)}".</p></div>`;
+  FAVSET=new Set(Store.favorites().map(f=>f.id));
+  LISTS.set('slive',result.live);
+  const sec=(title,items,cls,lname)=>items.length?
+    '<section class="section"><div class="section-head"><h2>'+title+
+    ' <span class="dim">('+items.length+(items.length===120?'+':'')+')</span></h2></div>'+
+    '<div class="grid '+cls+'">'+starts(items).map(item=>card(item,{list:lname})).join('')+'</div></section>':'';
+  const html=sec('Filmes',result.movie,'','')+
+    sec('Séries',result.series,'','')+
+    sec('Canais',result.live,'grid-live','slive');
+  box.innerHTML=html||'<div class="center-box small"><p class="dim">Nada encontrado para "'+
+    esc(SEARCHSTATE.q)+'".</p></div>';
   hydrateIcons(box);
 }
 
@@ -1058,7 +1136,7 @@ async function handleAction(el) {
   const a = el.dataset.act;
   const id = el.dataset.id;
   switch (a) {
-    case 'open': openItem(lookup(id), el.dataset.list); break;
+    case 'open': if(view.dataset.view==='search')recordSearch(); openItem(lookup(id),el.dataset.list); break;
     case 'resume': openItem(lookup(id), el.dataset.list, true); break;
     case 'go': go(el.dataset.href); break;
     case 'grp': {
@@ -1087,7 +1165,18 @@ async function handleAction(el) {
       break;
     }
     case 'ep': openItem(lookup(id), 'eps', true); break;
-    case 'stype': SEARCHSTATE.type = el.dataset.t; view.querySelectorAll('.chip').forEach((c) => c.classList.toggle('sel', c === el)); doSearch(); break;
+    case 'stype': SEARCHSTATE.type = el.dataset.t; view.querySelectorAll('.chip').forEach(c=>{c.classList.toggle('sel',c===el);c.setAttribute('aria-pressed',String(c===el));}); doSearch(); break;
+    case 'searchpick': SEARCHSTATE.q=el.dataset.query||''; if($('#q'))$('#q').value=SEARCHSTATE.q; recordSearch();doSearch();break;
+    case 'searchclear': Store.setSetting('searchHistory',[]);doSearch();break;
+    case 'rowscroll': {
+      const strip=el.closest('.carousel-section')?.querySelector('.row, .hubs');
+      if(strip) {
+        const direction=el.dataset.dir==='-1'?-1:1;
+        const amount=Math.max(240,Math.round(strip.clientWidth*0.82));
+        strip.scrollBy({left:direction*amount,behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'instant':'smooth'});
+      }
+      break;
+    }
     case 'tab': {
       const t = el.dataset.t;
       view.querySelectorAll('.tab').forEach((b) => b.classList.toggle('sel', b === el));
@@ -1124,7 +1213,7 @@ async function handleAction(el) {
     }
     case 'copyworker': {
       try {
-        const r = await fetch('proxy/cloudflare-worker.js?v=1.9.0', { cache: 'no-store' });
+        const r = await fetch('proxy/cloudflare-worker.js?v=1.10.0', { cache: 'no-store' });
         const code = await r.text();
         await navigator.clipboard.writeText(code);
         toast('✔ Código do Worker v1.8.1 copiado! Cole no seu Worker da Cloudflare e clique em Deploy.');
@@ -1177,6 +1266,17 @@ function initEvents() {
       Store.removeProgress(c.dataset.id); c.remove(); toast('Removido de Continuar Assistindo'); return;
     }
     toggleFav(lookup(c.dataset.id));
+  });
+
+  // Atalho / para busca no desktop, sem interferir com edição de texto ou reprodução.
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='/'||e.altKey||e.ctrlKey||e.metaKey||Player.active)return;
+    const el=document.activeElement;
+    if(el && (el.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)))return;
+    if(!matchMedia('(min-width:761px)').matches)return;
+    e.preventDefault();
+    if(location.hash!=='#/search')go('#/search');
+    setTimeout(()=>{if($('#q'))$('#q').focus();},60);
   });
 
   // Controle remoto: segurar OK = favoritar; botão Menu = favoritar
@@ -1276,7 +1376,7 @@ function boot() {
   Player.init({ resolve: resolveUrls });
   startClock();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js?v=1.9.0', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=1.10.0', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
   if (!location.hash) location.replace(Store.cfg ? '#/home' : '#/login');
   else route();

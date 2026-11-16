@@ -1,6 +1,6 @@
 // Destaques da página inicial: usar imagens válidas do catálogo do usuário.
 // Não consulta serviços externos de metadados nem expõe credenciais.
-import { imageCandidates } from './net.js?v=1.9.0';
+import { imageCandidates } from './net.js?v=1.10.0';
 
 const approvedByCategory = new Map();
 const MAX_SOURCE_CANDIDATES = 18;
