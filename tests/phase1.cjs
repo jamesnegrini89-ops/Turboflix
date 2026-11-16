@@ -101,7 +101,7 @@ function checkFilters(){
     assert.equal(await page.locator('#mainnav').isVisible(),false);
     await page.locator('#mobile-nav [data-route="#/search"]').click();
     await page.waitForURL('**/#/search');
-    assert.equal(await page.locator('#q').isVisible(),true);
+    await page.locator('#q').waitFor({state:'visible'});
     assert.equal(await page.locator('#mobile-nav [data-route="#/search"]').getAttribute('aria-current'),'page');
     await page.locator('#mobile-nav [data-route="#/home"]').click();
     await page.locator('.hub[data-key="movies"]').click();
