@@ -66,12 +66,14 @@ function unitSearch() {
     assert.doesNotMatch(homeText,/Destaques para Você|Jogos de Hoje/);
     console.log('PASS: seções da página inicial baseadas no catálogo real');
 
-    const next=p.locator('.home-categories .carousel-arrow.next');
-    await next.waitFor();
-    assert.equal(await next.isVisible(),true);
+    const moviesSection=p.locator('.section.carousel-section').filter({hasText:'Filmes adicionados recentemente'});
+    const next=moviesSection.locator('.carousel-arrow.next');
+    await next.waitFor({state:'visible'});
     assert.equal(await next.isEnabled(),true);
     await next.click();
-    await p.waitForFunction(()=>document.querySelector('.home-categories .hubs').scrollLeft>15);
+    await p.waitForFunction(()=>[...document.querySelectorAll('.section.carousel-section')].some(section=>
+      section.querySelector('h2')?.textContent?.includes('Filmes adicionados recentemente') &&
+      section.querySelector('.row')?.scrollLeft>15));
     console.log('PASS: setas do carrossel em desktop');
 
     await p.keyboard.press('/');
