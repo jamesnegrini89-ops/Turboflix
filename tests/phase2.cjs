@@ -114,7 +114,7 @@ function unitSearch() {
     assert.equal(await p.locator('#mobile-nav').isVisible(),true);
     assert.equal(await p.locator('.carousel-arrow').first().isVisible(),false);
     await p.locator('#mobile-nav [data-route="#/search"]').click();
-    assert.equal(await p.locator('#q').isVisible(),true);
+    await p.locator('#q').waitFor({state:'visible'});
     assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
     assert.deepEqual(errors,[]);
     console.log('PASS: navegação celular 390px, sem rolagem horizontal ou erros JS');
