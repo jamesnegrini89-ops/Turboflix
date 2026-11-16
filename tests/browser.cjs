@@ -52,7 +52,7 @@ const base = process.env.TEST_BASE_URL || 'http://127.0.0.1:8000';
  assert.match(await page.locator('#results').innerText(),/Ação 999/);
  console.log('PASS: busca sem acentos e foco preservado após Enter');
  await page.evaluate(()=>location.hash='#/series/s1');await requested;
- await page.locator('[data-route="#/settings"]').click();releaseSeries();
+ await page.locator('#mainnav [data-route="#/settings"]').click();releaseSeries();
  await page.waitForTimeout(300);assert.equal(await page.locator('#view').getAttribute('data-view'),'settings');
  await page.locator('[data-v="m3u8"]').click();
  assert.ok(await page.evaluate(async()=>{const {xtreamUrls}=await import('./js/xtream.js?v=1.9.0');return xtreamUrls({server:location.origin,user:'fixture',pass:'fixture',preferredOutput:'ts'},{sid:1,type:'live'})[0].endsWith('.m3u8')}));
