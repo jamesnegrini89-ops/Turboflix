@@ -103,7 +103,7 @@ function unitSearch() {
 
     await p.locator('#mainnav [data-route="#/home"]').click();
     await p.evaluate(async()=>{
-      const {Store}=await import('./js/storage.js?v=1.10.0');
+      const {Store}=await import('./js/storage.js?v=1.11.0');
       Store.saveProgress({id:'l1',type:'live',name:'Canal 1',group:'Esportes'},0,0);
     });
     await p.locator('#mainnav [data-route="#/home"]').click();

@@ -23,3 +23,5 @@ Cobertura: importação Xtream, grade incremental, setas de controle remoto, bus
 Fase 1: `node tests/phase1.cjs` verifica filtros combinados, favoritos com um toque, barra inferior e retorno à posição anterior no desktop e celular. O workflow `phase1-ui.yml` executa os testes com um catálogo falso, sem credenciais reais.
 
 Fase 2: `node tests/phase2.cjs` valida sugestões, histórico, atalho `/`, setas dos carrosséis, títulos honestos das seções e layout móvel.
+
+Fase 3: tests/phase3.cjs verifica 50 mil itens, rolagem, teclado, Android responsivo e atualização sem apagar dados.

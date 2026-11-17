@@ -198,6 +198,10 @@ export function moveFocus(dir) {
   // ================================================================
   const grid = cur.closest('.grid');
   if (grid && cur.classList.contains('card')) {
+    if(typeof grid._virtualMove==='function') {
+      const handled=grid._virtualMove(dir,cur);
+      if(handled)return true;
+    }
     let cards = [...grid.querySelectorAll('.card.focusable:not([hidden]):not(:disabled)')];
     const idx = cards.indexOf(cur);
     if (idx >= 0) {

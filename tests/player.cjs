@@ -47,7 +47,7 @@ execFileSync('ffmpeg', [
     await p.locator('#m3u-url').waitFor();
     const open = async number => {
       await p.evaluate(async n => {
-        const { Player } = await import('./js/player.js?v=1.10.0');
+        const { Player } = await import('./js/player.js?v=1.11.0');
         Player.open({
           id: 'test' + n, type: 'movie', name: 'Test ' + n,
           url: location.origin + '/fixture.webm'
@@ -79,7 +79,7 @@ execFileSync('ffmpeg', [
     await checkPlaying();
     console.log('PASS: native WebM/VP8 playback in Chromium');
     await p.evaluate(async () => {
-      const { Player } = await import('./js/player.js?v=1.10.0');
+      const { Player } = await import('./js/player.js?v=1.11.0');
       for (let i = 2; i <= 8; i++) {
         Player.open({ id: 'test' + i, type: 'movie', name: 'Test ' + i,
           url: location.origin + '/fixture.webm' });
@@ -89,7 +89,7 @@ execFileSync('ffmpeg', [
     assert.equal(await p.locator('#p-title').innerText(), 'Test 8');
     console.log('PASS: rapid replacement keeps last item active');
     await p.evaluate(async () => {
-      const { Player } = await import('./js/player.js?v=1.10.0');
+      const { Player } = await import('./js/player.js?v=1.11.0');
       Player.close();
     });
     await p.waitForTimeout(500);

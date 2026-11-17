@@ -531,3 +531,8 @@ button, summary { touch-action: manipulation; }
 @media (prefers-reduced-motion: reduce) {
   .section .row, .home-categories .hubs { scroll-snap-type: none; }
 }
+
+/* Fase 3: grade de janela limitada e verificador de versão web. */
+#grid.virtualized { overflow-anchor: none; }
+#apply-update[hidden] { display: none !important; }
+#update-status { overflow-wrap: anywhere; }

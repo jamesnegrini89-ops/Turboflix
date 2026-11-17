@@ -1,16 +1,18 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
-import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.10.0';
-import { esc, imgUrl, imageCandidates, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.10.0';
-import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.10.0';
-import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.10.0';
-import { initNav, focusFirst, focusEl } from './nav.js?v=1.10.0';
-import { Player } from './player.js?v=1.10.0';
-import { icon, hydrateIcons } from './icons.js?v=1.10.0';
-import { paintHomeCategories, resetHubArtworkCache } from './hub-art.js?v=1.10.0';
-import { availableYears, filterCatalog } from './browse-filters.js?v=1.10.0';
-import { findCatalogMatches, recentSearches, rememberSearch } from './search-ui.js?v=1.10.0';
+import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.11.0';
+import { esc, imgUrl, imageCandidates, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.11.0';
+import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.11.0';
+import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.11.0';
+import { initNav, focusFirst, focusEl } from './nav.js?v=1.11.0';
+import { Player } from './player.js?v=1.11.0';
+import { icon, hydrateIcons } from './icons.js?v=1.11.0';
+import { paintHomeCategories, resetHubArtworkCache } from './hub-art.js?v=1.11.0';
+import { availableYears, filterCatalog } from './browse-filters.js?v=1.11.0';
+import { findCatalogMatches, recentSearches, rememberSearch } from './search-ui.js?v=1.11.0';
+import { mountCatalogWindow, VIRTUAL_THRESHOLD } from './catalog-window.js?v=1.11.0';
+import { compareVersions, fetchLatestVersion, applyWebUpdate } from './update-ui.js?v=1.11.0';
 
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.11.0';
 const $ = (s, r = document) => r.querySelector(s);
 const view = $('#view');
 
@@ -23,6 +25,8 @@ let HOME_RECENT = null;
 let SEARCHIDX = null;       // índice de busca
 let lastHash = '';
 let installPrompt = null;
+let latestWebVersion=null;
+let virtualCatalog=null;
 const REG = new Map();      // itens renderizados na tela atual
 const LISTS = new Map();    // listas (para zapear canais / próximo episódio)
 const FOCUSMEM = {};        // último item focado por tela
@@ -159,7 +163,7 @@ function copyArtworkDiagnostics() {
   const d=artworkDiagnostics();
   return [
     'TurboFlix: diagnóstico de imagens (sem links nem credenciais)',
-    'Versão: 1.10.0',
+    'Versão: 1.11.0',
     'Origem: ' + (Store.cfg?.type || 'desconhecida'),
     'Itens: ' + d.total,
     'Com URL de imagem: ' + d.withUrl,
@@ -251,7 +255,8 @@ function card(item, opts = {}) {
   return '<div class="card-wrap ' + (live ? 'card-wrap-live' : '') + '">' +
     '<button class="card focusable ' + (live ? 'card-live' : 'card-poster') +
     (fav ? ' is-fav' : '') + '" data-act="' + (opts.act || 'open') +
-    '" data-id="' + esc(item.id) + '" data-list="' + esc(opts.list || '') + '">' +
+    '" data-id="' + esc(item.id) + '" data-list="' + esc(opts.list || '') + '"' +
+    (Number.isInteger(opts.virtualIndex)?' data-vi="'+opts.virtualIndex+'"':'')+'>' +
     '<div class="thumb"><span class="ph">' + esc(initials(item.name)) + '</span>' + img +
       (live ? '<span class="badge-live sm">AO VIVO</span>' : '') +
       (pct !== undefined ? '<div class="prog"><i style="width:' +
@@ -382,6 +387,7 @@ async function route() {
   }
 
   gridObserver?.disconnect();
+  virtualCatalog?.destroy(); virtualCatalog=null;
   coverObserver?.disconnect();
   REG.clear(); LISTS.clear();
   FAVSET = new Set(Store.favorites().map((f) => f.id));
@@ -645,8 +651,24 @@ function fillGrid(key,group,opts={}) {
     window.scrollTo(0,0);
   }
   grid.className='grid '+(list.filter(i=>i.type==='live').length>list.length/2?'grid-live':'');
+  virtualCatalog?.destroy();virtualCatalog=null;
+  grid.style.paddingTop='';grid.style.paddingBottom='';
   REG.clear();
   grid.innerHTML='';
+  if(list.length>VIRTUAL_THRESHOLD) {
+    grid.classList.add('virtualized');
+    const saved=opts.restore?.focusId||FOCUSMEM[location.hash];
+    const initialIndex=saved?list.findIndex(i=>i.id===saved):0;
+    const container=getComputedStyle(main).overflowY==='auto'?main:window;
+    virtualCatalog=mountCatalogWindow({
+      grid,items:list,
+      render:(item,index)=>card(item,{list:'browse',virtualIndex:index}),
+      focus:focusEl,observe:observeMissingCovers,
+      scrollContainer:container,initialIndex:Math.max(0,initialIndex)
+    });
+    gridObserver?.disconnect();gridObserver=null;
+    return;
+  }
   let shown=0;
   const more=()=>{
     if(!grid.isConnected||shown>=list.length)return;
@@ -976,8 +998,14 @@ function renderSettings() {
       </div>
 
       <div class="panel">
-        <h3>${icon('star')} Sobre</h3>
-        <p>TurboFlix v${APP_VERSION} — player IPTV. O app não fornece conteúdo; use apenas listas às quais você tem direito.</p>
+        <h3>${icon('star')} Sobre e atualizações</h3>
+        <p>Versão da interface web: <b>${APP_VERSION}</b>. A versão do APK Android é independente.</p>
+        <p id="update-status" class="dim" role="status" aria-live="polite">Toque em Verificar atualizações para consultar a versão publicada.</p>
+        <div class="actions">
+          <button class="btn focusable" data-act="checkupdate">${icon('refresh')} Verificar atualizações</button>
+          <button class="btn primary focusable" data-act="applyupdate" id="apply-update" ${latestWebVersion&&compareVersions(latestWebVersion,APP_VERSION)>0?'':'hidden'}>Atualizar interface</button>
+        </div>
+        <p class="dim">Atualizar a interface não apaga sua lista, seus favoritos ou o histórico. Não instala um novo APK.</p>
         <div class="actions">${installPrompt ? `<button class="btn primary focusable" data-act="install">Instalar aplicativo</button>` : ''}</div>
       </div>
     </div>`;
@@ -1213,7 +1241,7 @@ async function handleAction(el) {
     }
     case 'copyworker': {
       try {
-        const r = await fetch('proxy/cloudflare-worker.js?v=1.10.0', { cache: 'no-store' });
+        const r = await fetch('proxy/cloudflare-worker.js?v=1.11.0', { cache: 'no-store' });
         const code = await r.text();
         await navigator.clipboard.writeText(code);
         toast('✔ Código do Worker v1.8.1 copiado! Cole no seu Worker da Cloudflare e clique em Deploy.');
@@ -1232,6 +1260,30 @@ async function handleAction(el) {
     case 'clearprog': Store.clearProgress(); toast('Continuar Assistindo limpo'); break;
     case 'clearfav': Store.clearFavorites(); toast('Minha Lista limpa'); break;
     case 'clearcache': await idbClear(); toast('Cache limpo. A lista será baixada novamente.'); break;
+    case 'checkupdate': {
+      const status=$('#update-status');
+      if(status)status.textContent='Consultando a versão publicada...';
+      el.disabled=true;
+      try {
+        latestWebVersion=await fetchLatestVersion();
+        const cmp=compareVersions(latestWebVersion,APP_VERSION);
+        if(status)status.textContent=cmp>0?'Versão '+latestWebVersion+' disponível.':'A interface está atualizada ('+APP_VERSION+').';
+        const action=$('#apply-update');
+        if(action)action.hidden=cmp<=0;
+      }catch(e){
+        if(status)status.textContent='Não foi possível verificar: '+(e.message||'erro de conexão');
+      }finally{el.disabled=false;}
+      break;
+    }
+    case 'applyupdate': {
+      if(Player.active){toast('Feche o player antes de atualizar.');break;}
+      if(!latestWebVersion||compareVersions(latestWebVersion,APP_VERSION)<=0)break;
+      const status=$('#update-status');
+      if(status)status.textContent='Atualizando a interface...';
+      try{await applyWebUpdate(latestWebVersion);}
+      catch(e){if(status)status.textContent='Erro na atualização: '+(e.message||'tente novamente');}
+      break;
+    }
     case 'install': installPrompt?.prompt(); installPrompt = null; break;
   }
 }
@@ -1376,7 +1428,7 @@ function boot() {
   Player.init({ resolve: resolveUrls });
   startClock();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js?v=1.10.0', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=1.11.0', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
   if (!location.hash) location.replace(Store.cfg ? '#/home' : '#/login');
   else route();

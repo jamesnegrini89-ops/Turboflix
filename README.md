@@ -87,7 +87,7 @@ Para usar listas e canais `http://` sem qualquer bloqueio:
 
 ---
 
-## Tela flutuante no Android (versão web 1.10.0)
+## Tela flutuante no Android (versão web 1.11.0)
 
 Durante a reprodução, toque no ícone **Tela flutuante** no canto superior do player. Se o navegador permitir Picture-in-Picture, o vídeo continuará numa janela sobre outros aplicativos, com controles nativos de reprodução. O Android gerencia o tamanho e os gestos de pinça, quando compatíveis.
 
@@ -96,14 +96,14 @@ O TurboFlix também registra ações de Media Session para permitir que navegado
 **Atenção:** o APK original 1.8.5 permanece sem PiP nativo. O novo APK Android PiP 1.8.7 tem suporte nativo, sujeito à compatibilidade do dispositivo. Consulte `android/README.md`.
 
 
-## Compatibilidade Chrome 1.10.0
+## Compatibilidade Chrome 1.11.0
 
 As versões de importação dos módulos JavaScript foram unificadas, evitando caches de rede e DNS independentes entre os componentes do app. O Picture-in-Picture é carregado separadamente e não deve impedir a inicialização do player principal. Se a política do Chrome recusar a reprodução automática, o aplicativo oferece o botão **Toque para reproduzir** para tentar novamente a partir de um gesto explícito.
 
 **Importante:** quando um servidor IPTV utiliza HTTP e o aplicativo roda em HTTPS (GitHub Pages), o Chrome pode bloquear conteúdo misto ou CORS. Um proxy HTTPS compatível continua necessário nesses casos. Os dados de acesso IPTV não foram alterados.
 
 
-### Correção de capas e logotipos na versão web 1.10.0
+### Correção de capas e logotipos na versão web 1.11.0
 
 Pôsteres e logotipos HTTP hospedados fora do servidor IPTV não são mais enviados
 ao proxy restrito de reprodução. Para imagens públicas sem parâmetros sensíveis,
@@ -117,7 +117,7 @@ atualização no próximo carregamento online; não é preciso reinstalá-lo só
 para alterar o tratamento das imagens.
 
 
-### Capas ausentes e danificadas (versão web 1.10.0)
+### Capas ausentes e danificadas (versão web 1.11.0)
 
 A nova versão solicita dados de `get_vod_info` apenas para filmes Xtream
 visíveis cujas capas vieram vazias ou falharam ao carregar. As solicitações
@@ -132,7 +132,7 @@ O APK Android PiP 1.8.7 utiliza a versão web atualizada; não requer
 reinstalação para esse ajuste.
 
 
-### Imagens e diagnóstico 1.10.0
+### Imagens e diagnóstico 1.11.0
 
 O app agora tenta uma fonte HTTPS alternativa para capas e logos públicos,
 sem enviar endereços privados ou com credenciais a terceiros. Logos de esportes
@@ -143,7 +143,7 @@ não ter uma capa válida. **Configurações → Diagnóstico das imagens** most
 quantos itens não têm URL de capa e permite copiar uma síntese sem credenciais.
 
 
-### Capas de destaque da página inicial (web 1.10.0)
+### Capas de destaque da página inicial (web 1.11.0)
 
 Os cartões grandes de Filmes, Séries, Infantil, TV ao Vivo, Animes,
 Esportes e Novelas agora utilizam imagens da própria categoria, não
@@ -156,7 +156,7 @@ três verificações paralelas por grupo, sem modificar Worker ou player.
 O APK Android PiP 1.8.7 carrega essa versão web automaticamente ao abrir
 com conexão, sem necessidade de reinstalação.
 
-## Fase 1 de navegação (web 1.10.0)
+## Fase 1 de navegação (web 1.11.0)
 
 - **Celular:** barra inferior fixa com Início, Buscar, Minha Lista e Ajustes. Esconde-se no login e durante a reprodução.
 - **Catálogo:** filtro por gênero/categoria, ano de lançamento (quando há dados), ordem alfabética, data de inclusão (quando há dados) e Só favoritos. Filtros podem ser combinados.
@@ -165,11 +165,11 @@ com conexão, sem necessidade de reinstalação.
 - **Desktop/Fire TV:** navegação superior e suporte ao teclado/controle preservados.
 - **Player e Cloudflare Worker:** não foram alterados nesta fase.
 
-O APK Android PiP 1.8.7 carrega a interface web 1.10.0 quando está conectado à internet. Não é necessário recompilar o APK para essas alterações de interface.
+O APK Android PiP 1.8.7 carrega a interface web 1.11.0 quando está conectado à internet. Não é necessário recompilar o APK para essas alterações de interface.
 
 Testes: `tests/phase1.cjs` e workflow `.github/workflows/phase1-ui.yml`.
 
-## Fase 2 de navegabilidade (web 1.10.0)
+## Fase 2 de navegabilidade (web 1.11.0)
 
 - Busca com sugestões do catálogo, histórico das últimas 8 consultas no dispositivo, limpeza do histórico e atalho `/` no desktop.
 - Carrosséis com setas visíveis no computador. Rolagem por toque no celular e navegação por teclado/controle remoto mantidas.
@@ -179,3 +179,14 @@ Testes: `tests/phase1.cjs` e workflow `.github/workflows/phase1-ui.yml`.
 - O player, o proxy Cloudflare, o login IPTV e o APK não foram alterados.
 
 Testes `tests/phase2.cjs` junto com as regressões anteriores em GitHub Actions.
+
+## Fase 3: desempenho e atualização web (1.11.0)
+
+- Catálogos acima de 1.500 títulos usam grade virtualizada com no máximo 216 cartões no DOM; filtros, busca, rolagem e teclado continuam disponíveis.
+- O navegador mede a quantidade de colunas e altura dos cartões para manter o espaço dos itens temporariamente fora de tela.
+- Configurações > Sobre e atualizações > Verificar atualizações consulta o arquivo version.json com cache desativado.
+- Uma versão web mais recente habilita Atualizar interface. Só ocorre por ação explícita e não apaga IndexedDB, login, favoritos ou histórico.
+- O APK Android tem ciclo de atualização separado. Sem conexão, a atualização web não é efetuada.
+- Player IPTV e Cloudflare Worker foram preservados.
+
+Regressão em tests/phase3.cjs: 50.000 itens, rolagem profunda, teclado e atualização sem perda de dados.
