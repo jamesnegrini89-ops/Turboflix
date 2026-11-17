@@ -47,7 +47,7 @@ execFileSync('ffmpeg', [
     await p.locator('#m3u-url').waitFor();
     const open = async number => {
       await p.evaluate(async n => {
-        const { Player } = await import('./js/player.js?v=1.11.0');
+        const { Player } = await import('./js/player.js?v=1.11.1');
         Player.open({
           id: 'test' + n, type: 'movie', name: 'Test ' + n,
           url: location.origin + '/fixture.webm'
@@ -78,8 +78,56 @@ execFileSync('ffmpeg', [
     await open(1);
     await checkPlaying();
     console.log('PASS: native WebM/VP8 playback in Chromium');
+
+    // O botão deve utilizar a Activity Android quando o novo APK tem a ponte
+    // NativePip. Os sinais são simulados, sem exigir um telefone no CI.
+    await p.evaluate(() => {
+      window.__fsCalls = [];
+      window.NativePip = {
+        fullscreen(enabled) {
+          window.__fsCalls.push(enabled);
+          document.documentElement.classList.toggle('tf-native-fullscreen', enabled);
+        }
+      };
+    });
+    const fsBtn = p.locator('#player [data-p="fs"]');
+    await fsBtn.click({force:true});
+    await fsBtn.click({force:true});
+    assert.deepEqual(await p.evaluate(() => window.__fsCalls), [true,false]);
+    console.log('PASS: botão de tela cheia ativa/desativa ponte nativa Android');
+
+    // Um APK antigo pode disponibilizar AndroidDlna sem NativePip. A
+    // presença dessa interface não deve bloquear a Fullscreen API da Web.
+    await p.evaluate(() => {
+      delete window.NativePip;
+      window.AndroidDlna = {};
+      window.__browserFullscreenCalls = 0;
+      const root = document.getElementById('player');
+      Object.defineProperty(root, 'requestFullscreen', {
+        configurable:true,
+        value: () => {
+          window.__browserFullscreenCalls++;
+          return Promise.resolve();
+        }
+      });
+    });
+    await fsBtn.click({force:true});
+    assert.equal(await p.evaluate(() => window.__browserFullscreenCalls), 1);
+    console.log('PASS: APK com AndroidDlna não bloqueia botão de tela cheia');
+
+    // O encerramento do player restaura o modo anterior da Activity.
+    await p.evaluate(() => {
+      window.NativePip = {
+        fullscreen(enabled) {
+          window.__fsCalls.push(enabled);
+          document.documentElement.classList.toggle('tf-native-fullscreen', enabled);
+        }
+      };
+      document.documentElement.classList.add('tf-native-fullscreen');
+    });
+
     await p.evaluate(async () => {
-      const { Player } = await import('./js/player.js?v=1.11.0');
+      const { Player } = await import('./js/player.js?v=1.11.1');
       for (let i = 2; i <= 8; i++) {
         Player.open({ id: 'test' + i, type: 'movie', name: 'Test ' + i,
           url: location.origin + '/fixture.webm' });
@@ -89,11 +137,13 @@ execFileSync('ffmpeg', [
     assert.equal(await p.locator('#p-title').innerText(), 'Test 8');
     console.log('PASS: rapid replacement keeps last item active');
     await p.evaluate(async () => {
-      const { Player } = await import('./js/player.js?v=1.11.0');
+      const { Player } = await import('./js/player.js?v=1.11.1');
       Player.close();
     });
     await p.waitForTimeout(500);
     assert.ok(await p.locator('#video').evaluate(v => v.paused && !v.getAttribute('src')));
+    assert.equal(await p.evaluate(() => window.__fsCalls.at(-1)), false);
+    console.log('PASS: fechar player sai do modo de tela cheia nativa');
     assert.deepEqual(errors, []);
     console.log('PASS: closing player releases video and no JS crashes');
     await c.close();

@@ -190,3 +190,15 @@ Testes `tests/phase2.cjs` junto com as regressões anteriores em GitHub Actions.
 - Player IPTV e Cloudflare Worker foram preservados.
 
 Regressão em tests/phase3.cjs: 50.000 itens, rolagem profunda, teclado e atualização sem perda de dados.
+
+
+## Correção do botão Tela cheia (web 1.11.1 e Android 1.8.8)
+
+- Corrige a opção de tela cheia no player que era ignorada quando o APK antigo expunha a interface AndroidDlna.
+- No navegador, o player agora solicita fullscreen sobre o próprio elemento do vídeo e tenta a orientação horizontal. A rotação pode depender do sistema e das permissões do navegador.
+- O novo APK Android 1.8.8 oferece uma ponte nativa para a Activity ocultar barras e forçar paisagem ao tocar no ícone, mesmo com a rotação automática do celular desligada.
+- O segundo toque no botão ou Voltar sai do modo de tela cheia e restaura a orientação anterior. Encerrar a reprodução também sai do modo nativo.
+- Tela flutuante (PiP), cast, lista, favoritos e Cloudflare Worker não foram alterados.
+- A interface web atualizada funciona no APK antigo, mas o bloqueio de rotação do sistema não pode ser contornado sem instalar o novo APK.
+- O APK 1.8.8 é uma compilação de teste assinada com chave debug. Por assinatura diferente, pode exigir desinstalar o antigo 1.8.7, perdendo os dados salvos nele. Anote as configurações antes.
+- Regressão do botão adicionada a tests/player.cjs; a compilação Android é validada pelo workflow android-apk.yml.

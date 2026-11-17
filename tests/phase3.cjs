@@ -16,9 +16,9 @@ function unitChecks(){
   }
   const updates=fs.readFileSync('js/update-ui.js','utf8').replace(/^export /gm,'');
   const {compareVersions}=new Function(updates+'\nreturn {compareVersions};')();
-  assert.equal(compareVersions('1.11.0','1.10.9'),1);
+  assert.equal(compareVersions('1.11.1','1.10.9'),1);
   assert.equal(compareVersions('1.9.9','1.10.0'),-1);
-  assert.equal(compareVersions('1.11.0','1.11.0'),0);
+  assert.equal(compareVersions('1.11.1','1.11.1'),0);
   console.log('PASS: limites da grade e comparação de versões');
 }
 
@@ -47,7 +47,7 @@ function unitChecks(){
       const action=new URL(route.request().url()).searchParams.get('action');
       await route.fulfill({json:mock[action]||{user_info:{auth:1,status:'Active'},server_info:{}}});
     });
-    await p.route('**/version.json?**',route=>route.fulfill({json:{version:'1.11.1'}}));
+    await p.route('**/version.json?**',route=>route.fulfill({json:{version:'1.12.0'}}));
     await p.goto(base);
     await p.locator('#m3u-url').fill(base+'/get.php?username=fixture&password=fixture&output=ts');
     await p.locator('[data-act="login"]').click();
@@ -98,7 +98,7 @@ function unitChecks(){
       prog:localStorage.getItem('tf_progress')
     }));
     await p.locator('[data-act="checkupdate"]').click();
-    await p.waitForFunction(()=>document.querySelector('#update-status')?.textContent?.includes('1.11.1'));
+    await p.waitForFunction(()=>document.querySelector('#update-status')?.textContent?.includes('1.12.0'));
     assert.equal(await p.locator('#apply-update').isVisible(),true);
     const after=await p.evaluate(()=>({
       cfg:localStorage.getItem('tf_cfg'),

@@ -3,6 +3,7 @@ package com.turboflix.pip;
 import android.annotation.SuppressLint;
 import android.app.*;
 import android.content.*;
+import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.Icon;
@@ -15,15 +16,19 @@ import android.widget.*;
 import java.lang.ref.WeakReference;
 import java.util.Collections;
 
-/** TurboFlix 1.8.7: player web e Picture-in-Picture nativo Android 8+. */
+/** TurboFlix 1.8.8: player web, PiP e tela cheia nativa com rotação. */
 public class MainActivity extends Activity {
-  private static final String URL = "https://jamesnegrini89-ops.github.io/Turboflix/?apk=1.8.7";
+  private static final String URL = "https://jamesnegrini89-ops.github.io/Turboflix/?apk=1.8.8";
   private static final String HOST = "jamesnegrini89-ops.github.io";
   private static WeakReference<MainActivity> current = new WeakReference<>(null);
   private FrameLayout root;
   private WebView web;
   private View fullView;
   private WebChromeClient.CustomViewCallback fullCallback;
+  private boolean nativeFullscreen = false;
+  private int previousOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+  private int previousUiVisibility = 0;
+  private boolean previousStatusFullscreen = false;
   private boolean playing = false, hasVideo = false;
   private int width = 16, height = 9;
 
@@ -110,7 +115,7 @@ public class MainActivity extends Activity {
         if(fullView!=null){cb.onCustomViewHidden();return;}
         fullView=v;fullCallback=cb;web.setVisibility(View.GONE);
         root.addView(v,new FrameLayout.LayoutParams(-1,-1));
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        setVideoFullscreen(true);
       }
       @Override public void onHideCustomView(){closeFullscreen();}
     });
@@ -130,6 +135,9 @@ public class MainActivity extends Activity {
       });
     }
     @JavascriptInterface public void enter(){runOnUiThread(()->enterPip());}
+    @JavascriptInterface public void fullscreen(boolean enabled){
+      runOnUiThread(()->setVideoFullscreen(enabled));
+    }
   }
 
   private RemoteAction action(){
@@ -189,20 +197,56 @@ public class MainActivity extends Activity {
 
   @Override public void onPictureInPictureModeChanged(boolean active,Configuration cfg){
     super.onPictureInPictureModeChanged(active,cfg);
+    if(active&&nativeFullscreen)setVideoFullscreen(false);
     if(web!=null)web.evaluateJavascript(
       "document.documentElement.classList.toggle('tf-native-pip',"+active+")",null);
+  }
+
+  private void setVideoFullscreen(boolean enabled){
+    if(!enabled&&fullView!=null){
+      closeFullscreen();
+      return;
+    }
+    if(nativeFullscreen==enabled)return;
+    final View decor=getWindow().getDecorView();
+    if(enabled){
+      previousOrientation=getRequestedOrientation();
+      previousUiVisibility=decor.getSystemUiVisibility();
+      previousStatusFullscreen=(getWindow().getAttributes().flags
+        & WindowManager.LayoutParams.FLAG_FULLSCREEN)!=0;
+      nativeFullscreen=true;
+      getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+      decor.setSystemUiVisibility(previousUiVisibility
+        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+        | View.SYSTEM_UI_FLAG_FULLSCREEN
+        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+      // Força a orientação horizontal mesmo com a rotação automática desativada.
+      setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+    }else{
+      nativeFullscreen=false;
+      setRequestedOrientation(previousOrientation);
+      decor.setSystemUiVisibility(previousUiVisibility);
+      if(!previousStatusFullscreen)
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+    }
+    if(web!=null)web.evaluateJavascript(
+      "document.documentElement.classList.toggle('tf-native-fullscreen',"+enabled+")",null);
   }
 
   private void closeFullscreen(){
     if(fullView==null)return;
     root.removeView(fullView);fullView=null;web.setVisibility(View.VISIBLE);
-    getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
     if(fullCallback!=null)fullCallback.onCustomViewHidden();
     fullCallback=null;
+    setVideoFullscreen(false);
   }
 
   @Override public void onBackPressed(){
     if(fullView!=null){closeFullscreen();return;}
+    if(nativeFullscreen){setVideoFullscreen(false);return;}
     if(web!=null&&web.canGoBack()){web.goBack();return;}
     super.onBackPressed();
   }

@@ -2,7 +2,7 @@ name: TurboFlix UI regression checks
 on:
   workflow_dispatch:
   push:
-    branches: [main, 'phase1/**', 'phase2/**', 'phase3/**']
+    branches: [main, 'phase1/**', 'phase2/**', 'phase3/**', 'fix/**']
     paths:
       - '.github/workflows/phase1-ui.yml'
       - 'index.html'

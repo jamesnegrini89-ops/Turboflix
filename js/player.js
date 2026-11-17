@@ -4,9 +4,9 @@
 // - Ponte de streaming local via Service Worker (/__stream__) + suporte a Cloudflare Worker v1.8.1 (.sslip.io)
 //   para filmes/séries MP4/MKV http:// em páginas https:// (Desktop e Chrome Android)
 // - Transmissão DLNA (UPnP AVTransport SetAVTransportURI + Play), Cast Nativo / AirPlay e VLC / Web Video Caster
-import { Store } from './storage.js?v=1.11.0';
-import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.11.0';
-import { icon } from './icons.js?v=1.11.0';
+import { Store } from './storage.js?v=1.11.1';
+import { proxify, isMixed, hasProxy, esc, resolveHostIp, withIpFallback } from './net.js?v=1.11.1';
+import { icon } from './icons.js?v=1.11.1';
 
 const $ = (id) => document.getElementById(id);
 let el, video, overlay, castModal, hls = null, mts = null, S = null, hideTimer = null, stallTimer = null, lastSave = 0;
@@ -175,7 +175,7 @@ async function ensureSwBridge() {
       swBridgeReady = true;
       return true;
     }
-    const reg = await navigator.serviceWorker.register('sw.js?v=1.11.0', { updateViaCache: 'none' });
+    const reg = await navigator.serviceWorker.register('sw.js?v=1.11.1', { updateViaCache: 'none' });
     await reg.update().catch(() => {});
     await Promise.race([
       navigator.serviceWorker.ready,
@@ -882,7 +882,7 @@ export const Player = {
     // PiP opcional: falhas na API ou no módulo não impedem a inicialização do player.
     const pipButton = el.querySelector('[data-p="pip"]');
     if (pipButton) pipButton.hidden = true;
-    import('./pip.js?v=1.11.0').then(({ initPictureInPicture }) => {
+    import('./pip.js?v=1.11.1').then(({ initPictureInPicture }) => {
       pipControls = initPictureInPicture({
         video,
         button: pipButton,
@@ -1066,6 +1066,15 @@ export const Player = {
       }
     });
 
+    // Ao sair do modo de tela cheia do navegador, libera a orientação.
+    for (const event of ['fullscreenchange', 'webkitfullscreenchange']) {
+      document.addEventListener(event, () => {
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+          try { screen.orientation?.unlock?.(); } catch {}
+        }
+      });
+    }
+
     // Toque/mouse
     el.addEventListener('mousemove', () => showOverlay());
     video.addEventListener('click', () => (overlay.classList.contains('show') ? togglePlay() : showOverlay()));
@@ -1083,7 +1092,7 @@ export const Player = {
       else if (a === 'cast') { openCastModal(); }
       else if (a === 'copy-worker') {
         try {
-          const r = await fetch('proxy/cloudflare-worker.js?v=1.11.0', { cache: 'no-store' });
+          const r = await fetch('proxy/cloudflare-worker.js?v=1.11.1', { cache: 'no-store' });
           const code = await r.text();
           await navigator.clipboard.writeText(code);
           b.textContent = '✔ Código Copiado! Cole no seu Worker da Cloudflare';
@@ -1170,17 +1179,65 @@ export const Player = {
     el.hidden = true;
     $('p-zap').hidden = true;
     document.body.classList.remove('playing');
-    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    // Retorna a orientação anterior também no APK nativo, sem interromper o vídeo.
+    if (document.documentElement.classList.contains('tf-native-fullscreen')) {
+      try { window.NativePip?.fullscreen?.(false); } catch {}
+    }
+    if (document.fullscreenElement) {
+      Promise.resolve(document.exitFullscreen?.()).catch(() => {});
+    } else if (document.webkitFullscreenElement) {
+      try { document.webkitExitFullscreen?.(); } catch {}
+    }
     try { screen.orientation?.unlock?.(); } catch {}
   },
 
-  fullscreen(toggle) {
-    if (window.AndroidDlna) return;
-    try {
-      if (document.fullscreenElement) { if (toggle) document.exitFullscreen(); return; }
-      const r = (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)?.call(document.documentElement);
-      Promise.resolve(r).then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
-      if (!document.documentElement.requestFullscreen && !document.documentElement.webkitRequestFullscreen && video.webkitEnterFullscreen) video.webkitEnterFullscreen();
-    } catch {}
+  fullscreen(toggle = true) {
+    if (!toggle || !S) return;
+    // O APK 1.8.8 usa a Activity Android para ocultar as barras do sistema
+    // e forçar paisagem mesmo com a rotação automática do celular desligada.
+    if (typeof window.NativePip?.fullscreen === 'function') {
+      try {
+        const active = document.documentElement.classList.contains('tf-native-fullscreen');
+        window.NativePip.fullscreen(!active);
+        return;
+      } catch {
+        // WebView antiga: usa a API normal de tela cheia abaixo.
+      }
+    }
+
+    // Não ignorar o botão só porque o APK antigo expõe AndroidDlna.
+    // Tela cheia, transmissão e Picture-in-Picture são funções independentes.
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      try {
+        Promise.resolve(exit?.call(document)).catch(() => {});
+      } catch {}
+      return;
+    }
+    const request = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (request) {
+      try {
+        const result = request.call(el);
+        Promise.resolve(result).then(() => {
+          try {
+            // O navegador pode negar lock de orientação. A tela cheia continua válida.
+            Promise.resolve(screen.orientation?.lock?.('landscape')).catch(() => {});
+          } catch {}
+        }).catch(() => {
+          try { video.webkitEnterFullscreen?.(); } catch {}
+        });
+        return;
+      } catch {}
+    }
+    if (typeof video.webkitEnterFullscreen === 'function') {
+      try { video.webkitEnterFullscreen(); return; } catch {}
+    }
+    const toast = document.getElementById('toast');
+    if (toast) {
+      toast.textContent = 'Tela cheia indisponível neste navegador. Verifique as permissões ou atualize o APK.';
+      toast.hidden = false;
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => { toast.hidden = true; }, 4200);
+    }
   }
 };

@@ -1,18 +1,18 @@
 // TurboFlix - aplicativo principal (rotas, telas e eventos).
-import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.11.0';
-import { esc, imgUrl, imageCandidates, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.11.0';
-import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.11.0';
-import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.11.0';
-import { initNav, focusFirst, focusEl } from './nav.js?v=1.11.0';
-import { Player } from './player.js?v=1.11.0';
-import { icon, hydrateIcons } from './icons.js?v=1.11.0';
-import { paintHomeCategories, resetHubArtworkCache } from './hub-art.js?v=1.11.0';
-import { availableYears, filterCatalog } from './browse-filters.js?v=1.11.0';
-import { findCatalogMatches, recentSearches, rememberSearch } from './search-ui.js?v=1.11.0';
-import { mountCatalogWindow, VIRTUAL_THRESHOLD } from './catalog-window.js?v=1.11.0';
-import { compareVersions, fetchLatestVersion, applyWebUpdate } from './update-ui.js?v=1.11.0';
+import { Store, idbGet, idbSet, idbClear } from './storage.js?v=1.11.1';
+import { esc, imgUrl, imageCandidates, norm, hash, hasProxy, isMixed, cleanProxy, withIpFallback, resolveHostIp, registerHostMirror } from './net.js?v=1.11.1';
+import { loadM3U, xtreamFromM3uUrl } from './m3u.js?v=1.11.1';
+import { loadXtream, xtreamUrls, xtreamVodInfo, xtreamSeriesInfo, normServer } from './xtream.js?v=1.11.1';
+import { initNav, focusFirst, focusEl } from './nav.js?v=1.11.1';
+import { Player } from './player.js?v=1.11.1';
+import { icon, hydrateIcons } from './icons.js?v=1.11.1';
+import { paintHomeCategories, resetHubArtworkCache } from './hub-art.js?v=1.11.1';
+import { availableYears, filterCatalog } from './browse-filters.js?v=1.11.1';
+import { findCatalogMatches, recentSearches, rememberSearch } from './search-ui.js?v=1.11.1';
+import { mountCatalogWindow, VIRTUAL_THRESHOLD } from './catalog-window.js?v=1.11.1';
+import { compareVersions, fetchLatestVersion, applyWebUpdate } from './update-ui.js?v=1.11.1';
 
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.11.1';
 const $ = (s, r = document) => r.querySelector(s);
 const view = $('#view');
 
@@ -163,7 +163,7 @@ function copyArtworkDiagnostics() {
   const d=artworkDiagnostics();
   return [
     'TurboFlix: diagnóstico de imagens (sem links nem credenciais)',
-    'Versão: 1.11.0',
+    'Versão: 1.11.1',
     'Origem: ' + (Store.cfg?.type || 'desconhecida'),
     'Itens: ' + d.total,
     'Com URL de imagem: ' + d.withUrl,
@@ -1241,7 +1241,7 @@ async function handleAction(el) {
     }
     case 'copyworker': {
       try {
-        const r = await fetch('proxy/cloudflare-worker.js?v=1.11.0', { cache: 'no-store' });
+        const r = await fetch('proxy/cloudflare-worker.js?v=1.11.1', { cache: 'no-store' });
         const code = await r.text();
         await navigator.clipboard.writeText(code);
         toast('✔ Código do Worker v1.8.1 copiado! Cole no seu Worker da Cloudflare e clique em Deploy.');
@@ -1428,7 +1428,7 @@ function boot() {
   Player.init({ resolve: resolveUrls });
   startClock();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js?v=1.11.0', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=1.11.1', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
   if (!location.hash) location.replace(Store.cfg ? '#/home' : '#/login');
   else route();

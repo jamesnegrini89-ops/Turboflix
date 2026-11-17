@@ -536,3 +536,7 @@ button, summary { touch-action: manipulation; }
 #grid.virtualized { overflow-anchor: none; }
 #apply-update[hidden] { display: none !important; }
 #update-status { overflow-wrap: anywhere; }
+
+/* Tela cheia de vídeo em navegadores compatíveis. */
+#player:fullscreen,#player:-webkit-full-screen{position:fixed;inset:0;width:100%;height:100%;background:#000;overflow:hidden}
+#player:fullscreen #video,#player:-webkit-full-screen #video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
